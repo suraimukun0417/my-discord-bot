@@ -43,6 +43,7 @@ let statusMessageId = null;
 // 3. スラッシュコマンドの登録定義
 // ==========================================
 const commands = [
+    // ステータス変更
     new SlashCommandBuilder()
         .setName('status')
         .setDescription('ボットのステータスを変更します（管理者用）')
@@ -55,6 +56,7 @@ const commands = [
                     { name: 'メンテ (取り込み中)', value: 'maintenance' },
                     { name: '停止 (オフライン表示)', value: 'offline' }
                 )),
+    // ロールパネル作成
     new SlashCommandBuilder()
         .setName('rolepanel')
         .setDescription('ボタン式ロールパネルを作成します（管理者用）')
@@ -66,13 +68,27 @@ const commands = [
             option.setName('role')
                 .setDescription('ボタンで付与するロール')
                 .setRequired(true)),
+    // 新・AI質問コマンド（何でも会話可能）
     new SlashCommandBuilder()
         .setName('ai')
-        .setDescription('言葉の意味や調べたいことを検索・解説します（100%安定版）')
+        .setDescription('AIと自由におしゃべりや質問ができます（何でも対応版）')
         .addStringOption(option =>
             option.setName('question')
-                .setDescription('調べたいキーワードや言葉を入力してください')
-                .setRequired(true))
+                .setDescription('質問や話しかけたい内容を入力してください')
+                .setRequired(true)),
+    // 追加：じゃんけん機能
+    new SlashCommandBuilder()
+        .setName('janken')
+        .setDescription('AIボットとじゃんけん勝負をします！')
+        .addStringOption(option =>
+            option.setName('hand')
+                .setDescription('あなたが出す手を選んでください')
+                .setRequired(true)
+                .addChoices(
+                    { name: '✊ グー', value: 'goo' },
+                    { name: '✌️ チョキ', value: 'choki' },
+                    { name: '🖐️ パー', value: 'paa' }
+                ))
 ].map(command => command.toJSON());
 
 // ==========================================
@@ -178,37 +194,71 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.reply({ content: 'ロールパネルを作成しました。', ephemeral: true });
         }
 
-        // --- /ai コマンド (超安定・データ検索版) ---
+        // --- /ai コマンド (新・何でも会話ができる完全無料システム) ---
         if (commandName === 'ai') {
             await interaction.deferReply(); 
 
             const question = interaction.options.getString('question');
 
             try {
-                // 日本語版WikipediaのAPIから情報を検索して要約を取得する
-                const url = `https://ja.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(question)}`;
-                const response = await axios.get(url, { timeout: 6000 });
+                // キー不要・年齢制限なしで高度なチャットができるオープンAPIを利用
+                const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ja&dt=t&q=1`; // 通信チェック用
+                
+                // 非常に安定した対話型AIエンドポイントにリクエスト
+                const response = await axios.post('https://api.nexra.pro/v1/ai/gpt', {
+                    prompt: question,
+                    model: "gpt-4o"
+                }, { timeout: 10000 });
 
                 let aiResponse = "";
-                if (response.data && response.data.extract) {
-                    aiResponse = response.data.extract;
+                if (response.data && response.data.gpt) {
+                    aiResponse = response.data.gpt;
+                } else if (response.data && response.data.result) {
+                    aiResponse = response.data.result;
                 } else {
-                    aiResponse = `「${question}」に関する詳しいデータが見つかりませんでした。別の単語で試してみてください！`;
+                    aiResponse = "ごめんなさい、うまく言葉を返せませんでした。もう一度話しかけてみてください！";
                 }
 
-                const replyText = `**質問（キーワード）:** ${question}\n\n**AIの回答（データベースより）:**\n${aiResponse}`;
+                const replyText = `**質問:** ${question}\n\n**AIの回答:**\n${aiResponse}`;
                 return interaction.editReply(replyText.slice(0, 2000));
             } catch (error) {
-                // 検索に引っかからなかったりエラーになった場合の、簡単な雑談用応答システム
-                let fallbackMessage = `「${question}」について調べましたが、一致する固有名詞や解説が見つかりませんでした。言葉が正しいか確認するか、別の一般的な単語（例: 「トマト」「Discord」「インターネット」など）で聞いてみてください！`;
+                console.error('AIエラー:', error);
                 
-                // 1+1などの計算系への簡易対応
-                if (question.includes('1+1') || question.includes('1 1')) {
-                    fallbackMessage = "1 + 1 は 2 です！数学的な質問ですね。";
-                }
+                // 万が一メインのAIが落ちていた場合のバックアップシステム
+                try {
+                    const backup = await axios.get(`https://api.lolhuman.xyz/api/openai?apikey=free&text=${encodeURIComponent(question)}`);
+                    if(backup.data && backup.data.result) {
+                        return interaction.editReply(`**質問:** ${question}\n\n**AIの回答:**\n${backup.data.result}`);
+                    }
+                } catch(e){}
 
-                return interaction.editReply(fallbackMessage);
+                return interaction.editReply('AIが少しお疲れのようです。少し時間をあけてからもう一度話しかけてみてください！');
             }
+        }
+
+        // --- /janken コマンド (追加機能) ---
+        if (commandName === 'janken') {
+            const userHand = interaction.options.getString('hand');
+            const hands = ['goo', 'choki', 'paa'];
+            const botHand = hands[Math.floor(Math.random() * hands.length)];
+
+            const handLabels = { goo: '✊ グー', choki: '✌️ チョキ', paa: '🖐️ パー' };
+
+            let result = "";
+            if (userHand === botHand) {
+                result = "🤝 **あいこです！もう一回勝負しよう！**";
+            } else if (
+                (userHand === 'goo' && botHand === 'choki') ||
+                (userHand === 'choki' && botHand === 'paa') ||
+                (userHand === 'paa' && botHand === 'goo')
+            ) {
+                result = "🎉 **あなたの勝ちです！おめでとう！**";
+            } else {
+                result = "👾 **私の勝ちです！また挑戦してね！**";
+            }
+
+            const replyText = `**じゃんけんぽん！**\n\n・あなた: ${handLabels[userHand]}\n・AIボット: ${handLabels[botHand]}\n\n${result}`;
+            return interaction.reply({ content: replyText });
         }
     }
 
