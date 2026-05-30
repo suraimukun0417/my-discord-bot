@@ -82,17 +82,19 @@ const commands = [
 ].map(command => command.toJSON());
 
 // ==========================================
-// 4. 関数定義（ステータス更新）
+// 4. 関数定義（ステータス・ランプ更新）
 // ==========================================
 async function updateStatusMessage() {
     const channelId = process.env.STATUS_CHANNEL_ID;
     if (!channelId) return;
 
     try {
-        if (currentStatus === "online") client.user.setStatus('online');
-        else if (currentStatus === "maintenance") client.user.setStatus('dnd');
-        else if (currentStatus === "offline") client.user.setStatus('invisible');
+        // Discord上のランプの色（ステータス）を変更
+        if (currentStatus === "online") client.user.setStatus('online'); // 緑
+        else if (currentStatus === "maintenance") client.user.setStatus('dnd'); // 赤
+        else if (currentStatus === "offline") client.user.setStatus('invisible'); // 灰色
 
+        // チャンネル内のテキストを更新
         const channel = await client.channels.fetch(channelId);
         if (!channel) return;
 
@@ -164,7 +166,7 @@ client.on('interactionCreate', async (interaction) => {
 
             currentStatus = interaction.options.getString('type');
             await updateStatusMessage();
-            return interaction.reply({ content: `ステータスを更新しました。`, ephemeral: true });
+            return interaction.reply({ content: `ステータスとランプの色を更新しました。`, ephemeral: true });
         }
 
         // --- /rolepanel コマンド ---
@@ -236,7 +238,7 @@ client.on('interactionCreate', async (interaction) => {
                 }
             } catch (error) {
                 console.error('ロール変更エラー:', error);
-                return interaction.reply({ content: 'ロールの変更に失敗しました。ボットの権限（役職の順序）を確認してください。', ephemeral: true });
+                return interaction.reply({ content: 'ロールの変更に失敗しました。サーバー設定で、ボットの役職（順序）が対象の役職よりも上にあるか確認してください。', ephemeral: true });
             }
         }
     }
@@ -244,4 +246,3 @@ client.on('interactionCreate', async (interaction) => {
 
 // ボットのログイン
 client.login(process.env.DISCORD_TOKEN);
-
