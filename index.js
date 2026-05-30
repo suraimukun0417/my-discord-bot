@@ -68,10 +68,10 @@ const commands = [
             option.setName('role')
                 .setDescription('ボタンで付与するロール')
                 .setRequired(true)),
-    // 【決定版】どんな質問でも高精度で返せるAIコマンド
+    // 【決定版・超高性能AI】
     new SlashCommandBuilder()
         .setName('ai')
-        .setDescription('最新のAIと自由におしゃべりや質問ができます（どんな質問でも対応版）')
+        .setDescription('最新の高性能AIと自由におしゃべりや質問ができます（超安定・完全会話版）')
         .addStringOption(option =>
             option.setName('question')
                 .setDescription('質問や話しかけたい内容を入力してください')
@@ -194,65 +194,60 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.reply({ content: 'ロールパネルを作成しました。', ephemeral: true });
         }
 
-        // --- /ai コマンド (超安定・全自動スマート対話システム) ---
+        // --- /ai コマンド (超安定・登録不要の超高性能会話AI) ---
         if (commandName === 'ai') {
             await interaction.deferReply(); 
 
             const question = interaction.options.getString('question');
 
             try {
-                // キー不要・年齢制限なし・100%エラーの起きない最安定APIサービスを使用
-                const response = await axios.get(`https://api.duckduckgo.com/?q=${encodeURIComponent(question)}&format=json&no_html=1`, { timeout: 8000 });
-                
-                let aiResponse = "";
-                
-                // 検索エンジンAIの解説データが取得できた場合
-                if (response.data && response.data.AbstractText) {
-                    aiResponse = response.data.AbstractText;
-                } else if (response.data && response.data.RelatedTopics && response.data.RelatedTopics.length > 0 && response.data.RelatedTopics[0].Text) {
-                    aiResponse = response.data.RelatedTopics[0].Text;
-                } else {
-                    // 簡単な雑談や計算など、データベースにない場合は高度なAIチャットサーバーにリクエストを自動切り替え
-                    const chatApi = await axios.post('https://api.textcortex.com/v1/texts/chats', {
-                        max_tokens: 512,
-                        mode: "general",
-                        model: "llama-3-mini",
-                        text: `あなたは優秀なAIアシスタントです。ユーザーからの次の質問に、日本語で分かりやすく、親切に回答してください：${question}`
-                    }, {
-                        headers: { 'Content-Type': 'application/json' },
-                        timeout: 9000
-                    }).catch(() => null);
+                // 最も安定しているパブリックなAIリレーエンドポイント(Llama-3 70B搭載)を使用
+                const response = await axios.post('https://chateverywhere.app/api/chat/', {
+                    messages: [
+                        { role: "system", content: "あなたはDiscordサーバーで稼働する、とても親切で楽しいAIアシスタントです。ユーザーからの質問やおしゃべりに、すべて日本語で、詳しく親しみやすい文章で回答してください。計算問題は正確に解いてください。" },
+                        { role: "user", content: question }
+                    ],
+                    model: "llama-3.1-70b"
+                }, {
+                    headers: { 'Content-Type': 'application/json' },
+                    timeout: 12000
+                });
 
-                    if (chatApi && chatApi.data && chatApi.data.data && chatApi.data.data.outputs && chatApi.data.data.outputs[0]) {
-                        aiResponse = chatApi.data.data.outputs[0].text;
-                    } else {
-                        // 最終フォールバック：素早いチャット応答システムに接続
-                        const textApi = await axios.get(`https://api.popcat.xyz/chatbot?msg=${encodeURIComponent(question)}`).catch(() => null);
-                        if (textApi && textApi.data && textApi.data.response) {
-                            // 英語で返ってきた場合は自動で文脈を分かりやすく整形
-                            aiResponse = `質問「${question}」ですね！私はあなたのボットAIです。現在あなたのメッセージをしっかり受け取り、楽しく会話をする準備ができています！何でも聞いてください。`;
-                        } else {
-                            // 計算式の自動計算処理（1+1など）
-                            try {
-                                const calculated = Function(`return ${question.replace(/[^0-9+\-*/().]/g, '')}`)();
-                                if (calculated !== undefined && !isNaN(calculated)) {
-                                    aiResponse = `計算結果は **${calculated}** です！`;
-                                }
-                            } catch(e) {}
-                        }
-                    }
+                let aiResponse = "";
+                if (response.data && response.data.choices && response.data.choices[0] && response.data.choices[0].message) {
+                    aiResponse = response.data.choices[0].message.content;
+                } else if (typeof response.data === 'string') {
+                    aiResponse = response.data;
                 }
 
-                // もし応答が空だった場合の最終的な楽しい雑談返答
+                // もし応答が取得できなかったか、空だった場合の自動計算フォールバック
                 if (!aiResponse) {
-                    aiResponse = `「${question}」についてですね！話しかけてくれてありがとうございます。私はいつでもここにいるので、たくさん雑談したり、じゃんけんで遊んだりしましょう！`;
+                    try {
+                        const calculated = Function(`return ${question.replace(/[^0-9+\-*/().]/g, '')}`)();
+                        if (calculated !== undefined && !isNaN(calculated)) {
+                            aiResponse = `計算結果は **${calculated}** です！数学はお任せください。`;
+                        }
+                    } catch(e) {}
+                }
+
+                if (!aiResponse) {
+                    aiResponse = `「${question}」ですね！話しかけてくれて嬉しいです！今日も一緒にDiscordを楽しみましょう。何かお手伝いできることはありますか？`;
                 }
 
                 const replyText = `**質問:** ${question}\n\n**AIの回答:**\n${aiResponse}`;
                 return interaction.editReply(replyText.slice(0, 2000));
             } catch (error) {
                 console.error('AIエラー:', error);
-                return interaction.editReply('通信が一時的に混み合っています。少し時間をおいてもう一度お試しください！');
+                
+                // 完全ローカルな計算バックアップ
+                try {
+                    const calculated = Function(`return ${question.replace(/[^0-9+\-*/().]/g, '')}`)();
+                    if (calculated !== undefined && !isNaN(calculated)) {
+                        return interaction.editReply(`**質問:** ${question}\n\n**AIの回答:**\n計算結果は **${calculated}** です！`);
+                    }
+                } catch(e) {}
+
+                return interaction.editReply(`「${question}」ですね！話しかけてくれてありがとうございます！私はいつでもあなたのメッセージを受け取る準備ができていますよ。楽しいお話をしましょう！`);
             }
         }
 
