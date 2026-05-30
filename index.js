@@ -31,7 +31,7 @@ const client = new Client({
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // 🔴 操作を許可するロール（役職）の名前を設定してください
-const ALLOWED_ROLE_NAME = "YOUR_ROLE_NAME_HERE"; 
+const ALLOWED_ROLE_NAME = "ボット管理"; 
 
 const STATUS_TEMPLATES = {
     online: "🟢オンライン ⋯ 稼働中",
