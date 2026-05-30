@@ -29,7 +29,7 @@ const client = new Client({
 // 🔴 操作を許可するロール（役職）の名前を設定してください
 const ALLOWED_ROLE_NAME = "ボット管理"; 
 
-// ステータスの定義
+// ステータス（テキスト）の定義
 const STATUS_TEMPLATES = {
     online: "🟢オンライン ⋯ 稼働中",
     maintenance: "🔴オフライン ⋯ メンテナンス中",
@@ -40,7 +40,7 @@ const STATUS_TEMPLATES = {
 let currentStatus = "online";
 let statusMessageId = null;
 
-// ステータス表示を更新する関数
+// チャネルのテキストとDiscord本体のランプ状態を更新する関数
 async function updateStatusMessage() {
     const channelId = process.env.STATUS_CHANNEL_ID;
     if (!channelId) {
@@ -49,6 +49,16 @@ async function updateStatusMessage() {
     }
 
     try {
+        // 1. Discord上のランプの色（ステータス）を変更
+        if (currentStatus === "online") {
+            client.user.setStatus('online'); // 緑色
+        } else if (currentStatus === "maintenance") {
+            client.user.setStatus('dnd');    // 赤色（取り込み中）
+        } else if (currentStatus === "offline") {
+            client.user.setStatus('invisible'); // 灰色（オフライン表示）
+        }
+
+        // 2. チャンネル内のメッセージを更新
         const channel = await client.channels.fetch(channelId);
         if (!channel) return;
 
@@ -75,7 +85,7 @@ async function updateStatusMessage() {
             }
         }
     } catch (error) {
-        console.error("ステータスメッセージの更新に失敗しました:", error);
+        console.error("ステータスの更新に失敗しました:", error);
     }
 }
 
@@ -92,22 +102,19 @@ client.once('ready', async () => {
 client.on('messageCreate', async (message) => {
     if (message.author.bot || message.channel.id !== process.env.STATUS_CHANNEL_ID) return;
 
-    // ステータス変更コマンドのリスト
     const validCommands = ['!status メンテ', '!status 起動', '!status 停止'];
     if (!validCommands.includes(message.content)) return;
 
-    // 🔴 送信者が特定のロールを持っているかチェック
+    // 送信者が特定のロールを持っているかチェック
     const hasRole = message.member.roles.cache.some(role => role.name === ALLOWED_ROLE_NAME);
     
     if (!hasRole) {
-        // ロールを持っていない場合は警告を出し、メッセージを消去して終了
         const reply = await message.reply(`⚠️ このコマンドは「${ALLOWED_ROLE_NAME}」ロールを持つ人のみ実行できます。`);
-        setTimeout(() => reply.delete().catch(() => {}), 5000); // 5秒後に警告を消す
+        setTimeout(() => reply.delete().catch(() => {}), 5000);
         await message.delete().catch(() => {});
         return;
     }
 
-    // ロールを持っている場合のみ以下の処理を実行
     if (message.content === '!status メンテ') {
         currentStatus = "maintenance";
     } else if (message.content === '!status 起動') {
