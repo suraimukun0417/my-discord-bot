@@ -1,6 +1,6 @@
 const { Client, GatewayIntentBits, ActivityType, REST, Routes, SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const express = require('express');
-const { GoogleGenAI } = require('@google/genai');
+const axios = require('axios');
 
 // ==========================================
 // 1. Webサーバーの設定 (UptimeRobot / Render 用)
@@ -27,9 +27,6 @@ const client = new Client({
     ]
 });
 
-// AIの初期化
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
 // 🔴 操作を許可するロール（役職）の名前を設定してください
 const ALLOWED_ROLE_NAME = "ボット管理"; 
 
@@ -46,7 +43,6 @@ let statusMessageId = null;
 // 3. スラッシュコマンドの登録定義
 // ==========================================
 const commands = [
-    // ステータス変更コマンド
     new SlashCommandBuilder()
         .setName('status')
         .setDescription('ボットのステータスを変更します（管理者用）')
@@ -59,7 +55,6 @@ const commands = [
                     { name: 'メンテ (取り込み中)', value: 'maintenance' },
                     { name: '停止 (オフライン表示)', value: 'offline' }
                 )),
-    // ロールパネル作成コマンド
     new SlashCommandBuilder()
         .setName('rolepanel')
         .setDescription('ボタン式ロールパネルを作成します（管理者用）')
@@ -71,10 +66,9 @@ const commands = [
             option.setName('role')
                 .setDescription('ボタンで付与するロール')
                 .setRequired(true)),
-    // AI質問コマンド
     new SlashCommandBuilder()
         .setName('ai')
-        .setDescription('AI（Gemini）に質問をします')
+        .setDescription('AIに質問をします（APIキー不要版）')
         .addStringOption(option =>
             option.setName('question')
                 .setDescription('質問内容を入力してください')
@@ -89,12 +83,10 @@ async function updateStatusMessage() {
     if (!channelId) return;
 
     try {
-        // Discord上のランプの色（ステータス）を変更
-        if (currentStatus === "online") client.user.setStatus('online'); // 緑
-        else if (currentStatus === "maintenance") client.user.setStatus('dnd'); // 赤
-        else if (currentStatus === "offline") client.user.setStatus('invisible'); // 灰色
+        if (currentStatus === "online") client.user.setStatus('online');
+        else if (currentStatus === "maintenance") client.user.setStatus('dnd');
+        else if (currentStatus === "offline") client.user.setStatus('invisible');
 
-        // チャンネル内のテキストを更新
         const channel = await client.channels.fetch(channelId);
         if (!channel) return;
 
@@ -129,12 +121,10 @@ async function updateStatusMessage() {
 // 5. イベントハンドラー
 // ==========================================
 
-// 起動時：コマンド登録と初期ステータス設定
 client.once('ready', async () => {
     console.log(`${client.user.tag} がオンラインになりました！`);
     client.user.setActivity('スラッシュコマンド対応', { type: ActivityType.Custom });
 
-    // スラッシュコマンドをDiscordに登録
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     try {
         console.log('スラッシュコマンドを登録中...');
@@ -151,9 +141,7 @@ client.once('ready', async () => {
     await updateStatusMessage();
 });
 
-// スラッシュコマンド & ボタン入力の処理
 client.on('interactionCreate', async (interaction) => {
-    // 1. スラッシュコマンドの処理
     if (interaction.isChatInputCommand()) {
         const { commandName } = interaction;
 
@@ -179,7 +167,6 @@ client.on('interactionCreate', async (interaction) => {
             const text = interaction.options.getString('text');
             const role = interaction.options.getRole('role');
 
-            // ロール付与・剥奪用のボタンを作成
             const row = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
                     .setCustomId(`role_${role.id}`)
@@ -191,31 +178,32 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.reply({ content: 'ロールパネルを作成しました。', ephemeral: true });
         }
 
-        // --- /ai コマンド ---
+        // --- /ai コマンド (APIキー不要・年齢制限なし) ---
         if (commandName === 'ai') {
-            // アプリケーションが応答なしになるのを防ぐため、まず「考えています」状態にする
             await interaction.deferReply(); 
 
             const question = interaction.options.getString('question');
 
             try {
-                // Gemini APIを呼び出して回答を生成
-                const response = await ai.models.generateContent({
-                    model: 'gemini-2.5-flash',
-                    contents: question,
-                });
+                // キー不要でテキストを生成できる無料のパブリックAPIを利用
+                const response = await axios.get(`https://api.sc9.workers.dev/chat?text=${encodeURIComponent(question)}`);
+                
+                let aiResponse = "うまく返答を取得できませんでした。";
+                if (response.data && response.data.response) {
+                    aiResponse = response.data.response;
+                } else if (typeof response.data === 'string') {
+                    aiResponse = response.data;
+                }
 
-                // 回答を送信（長すぎる場合は2000文字で切る）
-                const replyText = `**質問:** ${question}\n\n**AIの回答:**\n${response.text}`;
+                const replyText = `**質問:** ${question}\n\n**AIの回答:**\n${aiResponse}`;
                 return interaction.editReply(replyText.slice(0, 2000));
             } catch (error) {
                 console.error('AIエラー:', error);
-                return interaction.editReply('AIからの応答取得に失敗しました。時間をおいて再度お試しください。');
+                return interaction.editReply('AIシステムの応答に失敗しました。もう一度試してみてください。');
             }
         }
     }
 
-    // 2. ロールパネルボタンの処理
     if (interaction.isButton()) {
         if (interaction.customId.startsWith('role_')) {
             const roleId = interaction.customId.replace('role_', '');
@@ -228,21 +216,18 @@ client.on('interactionCreate', async (interaction) => {
 
             try {
                 if (member.roles.cache.has(roleId)) {
-                    // 既に持っていれば外す
                     await member.roles.remove(roleId);
                     return interaction.reply({ content: `ロール「${role.name}」を外しました。`, ephemeral: true });
                 } else {
-                    // 持っていなければ付与する
                     await member.roles.add(roleId);
                     return interaction.reply({ content: `ロール「${role.name}」を付与しました！`, ephemeral: true });
                 }
             } catch (error) {
                 console.error('ロール変更エラー:', error);
-                return interaction.reply({ content: 'ロールの変更に失敗しました。サーバー設定で、ボットの役職（順序）が対象の役職よりも上にあるか確認してください。', ephemeral: true });
+                return interaction.reply({ content: 'ロールの変更に失敗しました。サーバー設定でボットの役職が一番上にあるか確認してください。', ephemeral: true });
             }
         }
     }
 });
 
-// ボットのログイン
 client.login(process.env.DISCORD_TOKEN);
