@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, ActivityType, REST, Routes, SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, ActivityType, REST, Routes, SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ChannelType } = require('discord.js');
 const express = require('express');
 const axios = require('axios');
 
@@ -23,8 +23,10 @@ const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
-    ]
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.DirectMessages // DMのメッセージを読み取るために必要
+    ],
+    partials: ['Channel'] // DMを正常に受け取るために必要
 });
 
 // 🔴 操作を許可するロール（役職）の名前を設定してください
@@ -68,7 +70,7 @@ const commands = [
             option.setName('role')
                 .setDescription('ボタンで付与するロール')
                 .setRequired(true)),
-    // 復活・強化版：DM埋め込み送信コマンド
+    // DM埋め込み送信
     new SlashCommandBuilder()
         .setName('dm_say')
         .setDescription('特定のユーザーにボットから埋め込みDMを送ります（管理者用）')
@@ -112,8 +114,10 @@ const commands = [
 ].map(command => command.toJSON());
 
 // ==========================================
-// 4. 関数定義（ステータス・ランプ更新）
+// 4. 関数定義
 // ==========================================
+
+// ステータス・ランプ更新関数
 async function updateStatusMessage() {
     const channelId = process.env.STATUS_CHANNEL_ID;
     if (!channelId) return;
@@ -153,6 +157,20 @@ async function updateStatusMessage() {
     }
 }
 
+// ログチャンネルに埋め込みを送信する共通関数
+async function sendToLogChannel(embed) {
+    const logChannelId = process.env.LOG_CHANNEL_ID;
+    if (!logChannelId) return;
+    try {
+        const logChannel = await client.channels.fetch(logChannelId);
+        if (logChannel) {
+            await logChannel.send({ embeds: [embed] });
+        }
+    } catch (error) {
+        console.error("ログの送信に失敗しました:", error);
+    }
+}
+
 // ==========================================
 // 5. イベントハンドラー
 // ==========================================
@@ -175,6 +193,25 @@ client.once('ready', async () => {
 
     currentStatus = "online";
     await updateStatusMessage();
+});
+
+// DM受信を監視する処理（相手からボットへのDM返信をログに流す）
+client.on('messageCreate', async (message) => {
+    // ボット自身の発言、またはDM以外のメッセージは無視
+    if (message.author.bot) return;
+    if (message.channel.type !== ChannelType.DM) return;
+
+    // 管理ログ用の埋め込みを作成
+    const logEmbed = new EmbedBuilder()
+        .setTitle('📩 ユーザーからのDM受信')
+        .setDescription(message.content || '*(テキストなし・画像等)*')
+        .setColor('#FF9900')
+        .addFields(
+            { name: '送信ユーザー', value: `${message.author.tag} (${message.author.id})`, inline: false }
+        )
+        .setTimestamp();
+
+    await sendToLogChannel(logEmbed);
 });
 
 client.on('interactionCreate', async (interaction) => {
@@ -214,7 +251,7 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.reply({ content: 'ロールパネルを作成しました。', ephemeral: true });
         }
 
-        // --- /dm_say コマンド (復活＆機能強化版) ---
+        // --- /dm_say コマンド ---
         if (commandName === 'dm_say') {
             const hasRole = interaction.member.roles.cache.some(role => role.name === ALLOWED_ROLE_NAME);
             if (!hasRole) {
@@ -228,7 +265,6 @@ client.on('interactionCreate', async (interaction) => {
 
             let user = targetUser;
 
-            // リスト選択がなく、ユーザーIDが手動入力されていた場合はIDからユーザーを探す
             if (!user && targetUserId) {
                 try {
                     user = await client.users.fetch(targetUserId.trim());
@@ -244,19 +280,31 @@ client.on('interactionCreate', async (interaction) => {
             await interaction.deferReply({ ephemeral: true });
 
             try {
-                // 綺麗な埋め込みメッセージ(Embed)を作成
                 const embed = new EmbedBuilder()
                     .setTitle(title)
                     .setDescription(description)
                     .setColor('#5865F2')
                     .setTimestamp();
 
-                // DM送信を実行
                 await user.send({ embeds: [embed] });
+
+                // 【追加】ログ用チャンネルへDM送信記録を転送
+                const logEmbed = new EmbedBuilder()
+                    .setTitle('📤 ボットからのDM送信ログ')
+                    .setColor('#5865F2')
+                    .addFields(
+                        { name: '宛先ユーザー', value: `${user.tag} (${user.id})`, inline: false },
+                        { name: '実行者', value: `${interaction.user.tag}`, inline: true },
+                        { name: 'タイトル', value: title, inline: false },
+                        { name: '本文', value: description, inline: false }
+                    )
+                    .setTimestamp();
+                await sendToLogChannel(logEmbed);
+
                 return interaction.editReply({ content: `✅ ${user.tag} に埋め込みDMを正常に送信しました！` });
             } catch (error) {
                 console.error('DM送信エラー:', error);
-                return interaction.editReply({ content: `❌ DMを送信できませんでした。（相手がDMを閉じてる、またはボットと共通のサーバーにいない可能性があります）` });
+                return interaction.editReply({ content: `❌ DMを送信できませんでした。` });
             }
         }
 
@@ -294,20 +342,27 @@ client.on('interactionCreate', async (interaction) => {
                 }
 
                 if (!aiResponse) {
-                    aiResponse = `「${question}」ですね！話しかけてくれて嬉しいです！今日も一緒にDiscordを楽しみましょう。何かお手伝いできることはありますか？`;
+                    aiResponse = `「${question}」ですね！話しかけてくれて嬉しいです！何かお手伝いできることはありますか？`;
                 }
+
+                // 【追加】ログ用チャンネルへAIのやり取りを転送
+                const logEmbed = new EmbedBuilder()
+                    .setTitle('🤖 AI質問利用ログ')
+                    .setColor('#2ECC71')
+                    .addFields(
+                        { name: '利用者', value: `${interaction.user.tag} (${interaction.user.id})`, inline: false },
+                        { name: '質問内容', value: question, inline: false },
+                        { name: 'AIの回答', value: aiResponse.slice(0, 1024), inline: false }
+                    )
+                    .setTimestamp();
+                await sendToLogChannel(logEmbed);
 
                 const replyText = `**質問:** ${question}\n\n**AIの回答:**\n${aiResponse}`;
                 return interaction.editReply(replyText.slice(0, 2000));
             } catch (error) {
                 console.error('AIエラー:', error);
-                try {
-                    const calculated = Function(`return ${question.replace(/[^0-9+\-*/().]/g, '')}`)();
-                    if (calculated !== undefined && !isNaN(calculated)) {
-                        return interaction.editReply(`**質問:** ${question}\n\n**AIの回答:**\n計算結果は **${calculated}** です！`);
-                    }
-                } catch(e) {}
-                return interaction.editReply(`「${question}」ですね！話しかけてくれてありがとうございます！私はいつでもあなたのメッセージを受け取る準備ができていますよ。楽しいお話をしましょう！`);
+                const errorReply = `「${question}」ですね！話しかけてくれてありがとうございます！楽しいお話をしましょう！`;
+                return interaction.editReply(errorReply);
             }
         }
 
