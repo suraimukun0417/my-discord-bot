@@ -45,7 +45,7 @@ let examDeadline = null;           // 提出期限（Dateオブジェクト）
 const forumToUser = new Map();     // フォーラムID -> ユーザーID
 const userToForum = new Map();     // ユーザーID -> フォーラムID
 
-// 【さらに増量】全7問（選択4問、記述3問）の試験問題
+// 全7問（選択4問、記述3問）の試験問題
 const EXAM_DATA = {
     moderator: {
         name: '🛡️ モデレーター試験',
@@ -103,15 +103,11 @@ const commands = [
         .setName('janken')
         .setDescription('AIボットとじゃんけん勝負をします！')
         .addStringOption(option => option.setName('hand').setDescription('手').setRequired(true).addChoices({ name: '✊ グー', value: 'goo' }, { name: '✌️ チョキ', value: 'choki' }, { name: '🖐️ パー', value: 'paa' })),
-    
-    // 💡 人事部ロール専用：試験送信コマンド
     new SlashCommandBuilder()
         .setName('exam')
         .setDescription('指定したユーザーのDMに配属試験を送信します（人事部専用）')
         .addUserOption(option => option.setName('user').setDescription('試験を受けさせたいメンバー').setRequired(true))
         .addStringOption(option => option.setName('type').setDescription('送信する試験の種類').setRequired(true).addChoices({ name: '🛡️ モデレーター試験', value: 'moderator' }, { name: '👑 管理者試験', value: 'admin' })),
-    
-    // 💡 人事部ロール専用：提出期限設定コマンド
     new SlashCommandBuilder()
         .setName('exam_deadline')
         .setDescription('配属試験の提出期限を設定します（人事部専用）')
@@ -150,15 +146,11 @@ async function sendToLogChannel(embed) {
 // 期限超過とフォーラム自動削除を毎秒チェックするタイマー
 setInterval(async () => {
     if (examDeadline && new Date() > examDeadline) {
-        // 期限切れになった場合、すべてのアクティブな質問フォーラムを自動削除
         for (const [forumId, userId] of forumToUser.entries()) {
             try {
                 const thread = await client.channels.fetch(forumId);
-                if (thread) {
-                    await thread.delete('提出期限が切れたため、質問フォーラムを自動削除しました。');
-                }
+                if (thread) await thread.delete('提出期限が切れたため、質問フォーラムを自動削除しました。');
             } catch (e) {}
-            // メモリーマップからも削除
             userToForum.delete(userId);
             forumToUser.delete(forumId);
         }
@@ -181,7 +173,7 @@ client.once('ready', async () => {
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
-    // --- 📥 人事部が「質問フォーラム（スレッド内）」で発言した内容をユーザーDMへ転送 ---
+    // --- 📥 人事部が「質問フォーラム内」で発言した内容をユーザーDMへ転送 ---
     if (message.channel.isThread() && forumToUser.has(message.channel.id)) {
         const targetUserId = forumToUser.get(message.channel.id);
         try {
@@ -193,10 +185,10 @@ client.on('messageCreate', async (message) => {
                     .setColor('#2ECC71')
                     .setTimestamp();
                 await targetUser.send({ embeds: [relayEmbed] });
-                await message.react('✅'); // 転送成功マーク
+                await message.react('✅'); 
             }
         } catch (e) {
-            await message.reply('❌ ユーザーへのDM転送に失敗しました。（DMが閉じられている可能性があります）');
+            await message.reply('❌ ユーザーへのDM転送に失敗しました。');
         }
         return;
     }
@@ -211,21 +203,20 @@ client.on('messageCreate', async (message) => {
         return await message.channel.send('❌ **提出期限が過ぎています。これ以上回答や質問を送信することはできません。**');
     }
 
-    // ❓ 期限内かつユーザーが「質問」と送信した場合のフォーラム自動作成処理
+    // ❓ 試験中、ユーザーが「質問」と送信した場合のフォーラム自動作成
     if (message.content.trim() === '質問' && activeExams.has(userId)) {
         if (userToForum.has(userId)) {
-            return await message.channel.send('💡 すでにあなた専用の質問フォーラムが作成されています。このDMにそのまま質問内容を送信してください。');
+            return await message.channel.send('💡 すでに質問フォーラムが開いています。このまま質問内容を送信してください。終わる場合は「**質問終了**」と送信してください。');
         }
 
         const forumChannelId = process.env.FORUM_CHANNEL_ID;
         if (!forumChannelId) {
-            return await message.channel.send('❌ サーバー側のフォーラム設定が整っていません。運営にお伝えください。');
+            return await message.channel.send('❌ サーバー側のフォーラム設定が整っていません。');
         }
 
         try {
             const forumChannel = await client.channels.fetch(forumChannelId);
             if (forumChannel && forumChannel.type === ChannelType.GuildForum) {
-                // 新しいフォーラム（スレッド）を作成
                 const thread = await forumChannel.threads.create({
                     name: `❓ 質問: ${message.author.username} からの試験問い合わせ`,
                     autoArchiveDuration: 60,
@@ -235,11 +226,10 @@ client.on('messageCreate', async (message) => {
                     reason: '試験中の質問対応用匿名スレッド'
                 });
 
-                // 双方向リンクを登録
                 userToForum.set(userId, thread.id);
                 forumToUser.set(thread.id, userId);
 
-                return await message.channel.send('✨ **人事部直通の質問フォーラムがサーバー内に作成されました！**\nこれより、このDMに質問内容を送信すると、人事部へ自動的に転送され、直接会話をすることができます。質問をどうぞ！');
+                return await message.channel.send('✨ **人事部直通の質問フォーラムが新規作成されました！**\nこれより、このDMに入力した内容はすべて人事部へ転送されます。質問をどうぞ！\n\n*※質問が終わったら「**質問終了**」と送信すると、試験回答モードに戻ります。*');
             }
         } catch (error) {
             console.error(error);
@@ -247,31 +237,59 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 📤 質問フォーラムが開いている場合の、ユーザーDMからフォーラムへのメッセージ転送
+    // 🚪 ユーザーが「質問終了」と送信した場合のクローズ処理
+    if (message.content.trim() === '質問終了' && activeExams.has(userId)) {
+        if (!userToForum.has(userId)) {
+            return await message.channel.send('💡 現在質問モードではありません。そのまま問題にお答えください。');
+        }
+
+        const threadId = userToForum.get(userId);
+        try {
+            const thread = await client.channels.fetch(threadId);
+            if (thread) {
+                await thread.send('🔒 **ユーザーが「質問終了」を宣言したため、この対話スレッドを閉じます（自動削除）。**');
+                await thread.delete();
+            }
+        } catch (e) {}
+
+        // マップから削除
+        userToForum.delete(userId);
+        forumToUser.delete(threadId);
+
+        // 現在止まっていた問題を再案内して回答モードに完全復帰させる
+        const examState = activeExams.get(userId);
+        const examInfo = EXAM_DATA[examState.type];
+        const currentQuestion = examInfo.questions[examState.step - 1];
+
+        const resumeEmbed = new EmbedBuilder()
+            .setTitle(`↩️ 試験に戻りました: ${currentQuestion.title}`)
+            .setDescription(`${currentQuestion.text}\n\n*※質問モードは終了しました。この問題への回答を送信してください。再度質問したい場合は「**質問**」と送信してください。*`)
+            .setColor(examInfo.color);
+
+        return await message.channel.send({ embeds: [resumeEmbed] });
+    }
+
+    // 📤 質問モード中のメッセージ転送（質問中のメッセージは回答として扱わずガードする）
     if (userToForum.has(userId)) {
         const threadId = userToForum.get(userId);
         try {
             const thread = await client.channels.fetch(threadId);
             if (thread) {
-                await thread.send(`📬 **[ユーザーからのメッセージ]:** ${message.content}`);
+                await thread.send(`📬 **[ユーザーからの質問メッセージ]:** ${message.content}`);
                 await message.react('✉️');
-                // もし「質問」という単語そのものを送っていた場合はここで処理終了
-                if (message.content.trim() === '質問') return;
             }
         } catch (e) {
             userToForum.delete(userId);
             forumToUser.delete(threadId);
         }
+        return; // ⚠️ ここで終了。質問中は問題は絶対に進みません！
     }
 
-    // 📝 試験の全7問ステップ回収・採点システム
+    // 📝 通常の試験回答システム（全7問ステップ回収）
     if (activeExams.has(userId)) {
         const examState = activeExams.get(userId);
         const examInfo = EXAM_DATA[examState.type];
         const currentStep = examState.step; // 1〜7
-
-        // 「質問」というコマンド文字自体は回答としてカウントしない
-        if (message.content.trim() === '質問') return;
 
         // 回答を保存
         examState.answers.push({
@@ -293,12 +311,6 @@ client.on('messageCreate', async (message) => {
 
         // 全7問すべて回答し終わった場合
         activeExams.delete(userId);
-        // もし質問フォーラムが開いていたら試験終了と同時に閉じる
-        if (userToForum.has(userId)) {
-            const fid = userToForum.get(userId);
-            try { const th = await client.channels.fetch(fid); if(th) await th.delete(); } catch(e){}
-            userToForum.delete(userId); forumToUser.delete(fid);
-        }
 
         await message.channel.send('⏳ **全7問の回答をすべて回収しました！現在、高性能AIが適正度を厳密に分析・採点しています。このまま15秒ほどお待ちください...**');
 
@@ -385,7 +397,6 @@ client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
     const { commandName } = interaction;
 
-    // --- 🚨 旧管理コマンドの権限チェック ---
     if (['status', 'rolepanel', 'dm_say'].includes(commandName)) {
         const hasRole = interaction.member.roles.cache.some(role => role.name === ALLOWED_ROLE_NAME);
         if (!hasRole) return interaction.reply({ content: `⚠️ 権限がありません。`, ephemeral: true });
@@ -442,12 +453,9 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: `あなた: ${handLabels[userHand]}\nボット: ${handLabels[botHand]}\n\n${result}` });
     }
 
-    // --- 🛡️ /exam コマンド (人事部ロール専用) ---
     if (commandName === 'exam') {
         const isHR = interaction.member.roles.cache.some(role => role.name === HR_ROLE_NAME);
-        if (!isHR) {
-            return interaction.reply({ content: `⚠️ このコマンドは「${HR_ROLE_NAME}」ロールを持つ人だけが実行可能です。`, ephemeral: true });
-        }
+        if (!isHR) return interaction.reply({ content: `⚠️ このコマンドは「${HR_ROLE_NAME}」ロールを持つ人だけが実行可能です。`, ephemeral: true });
 
         const targetUser = interaction.options.getUser('user');
         const examType = interaction.options.getString('type');
@@ -459,9 +467,7 @@ client.on('interactionCreate', async (interaction) => {
             activeExams.set(targetUser.id, { type: examType, step: 1, answers: [] });
 
             let deadlineNotice = "なし";
-            if (examDeadline) {
-                deadlineNotice = `<t:${Math.floor(examDeadline.getTime() / 1000)}:F> (<t:${Math.floor(examDeadline.getTime() / 1000)}:R>)`;
-            }
+            if (examDeadline) deadlineNotice = `<t:${Math.floor(examDeadline.getTime() / 1000)}:F> (<t:${Math.floor(examDeadline.getTime() / 1000)}:R>)`;
 
             const q1Embed = new EmbedBuilder()
                 .setTitle(`📝 ${examInfo.name} の受講案内`)
@@ -477,25 +483,19 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // --- ⏰ /exam_deadline コマンド (人事部ロール専用) ---
     if (commandName === 'exam_deadline') {
         const isHR = interaction.member.roles.cache.some(role => role.name === HR_ROLE_NAME);
-        if (!isHR) {
-            return interaction.reply({ content: `⚠️ このコマンドは「${HR_ROLE_NAME}」ロールを持つ人だけが実行可能です。`, ephemeral: true });
-        }
+        if (!isHR) return interaction.reply({ content: `⚠️ このコマンドは「${HR_ROLE_NAME}」ロールを持つ人だけが実行可能です。`, ephemeral: true });
 
         const minutes = interaction.options.getInteger('minutes');
-
         if (minutes === 0) {
             examDeadline = null;
-            return interaction.reply({ content: '✅ 試験の提出期限を解除（無期限に設定）しました。' });
+            return interaction.reply({ content: '✅ 試験の提出期限を解除しました。' });
         }
 
-        // 現在時刻から指定分後を設定
         examDeadline = new Date(Date.now() + minutes * 60000);
         const timestamp = Math.floor(examDeadline.getTime() / 1000);
-
-        return interaction.reply({ content: `✅ 試験の提出期限を今から **${minutes}分後** に設定しました！\n期限: <t:${timestamp}:F> (<t:${timestamp}:R>)` });
+        return interaction.reply({ content: `✅ 試験の提出期限を今から **${minutes}分後** に設定しました！\n期限: <t:${timestamp}:F>` });
     }
 });
 
