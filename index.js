@@ -41,6 +41,9 @@ let statusMessageId = null;
 const activeExams = new Map();     // 受験者の進行状況
 let examDeadline = null;           // 提出期限（Dateオブジェクト）
 
+// 1つの埋め込みを更新し続けるためのメッセージID管理マップ (ユーザーID -> { dmMsgId, logMsgId })
+const userProgressMessages = new Map();
+
 // フォーラムとユーザーDMの双方向マッピング
 const forumToUser = new Map();     // フォーラムID -> ユーザーID
 const userToForum = new Map();     // ユーザーID -> フォーラムID
@@ -108,8 +111,6 @@ const commands = [
         .setDescription('指定したユーザーのDMに配属試験を送信します（人事部専用）')
         .addUserOption(option => option.setName('user').setDescription('試験を受けさせたいメンバー').setRequired(true))
         .addStringOption(option => option.setName('type').setDescription('送信する試験の種類').setRequired(true).addChoices({ name: '🛡️ モデレーター試験', value: 'moderator' }, { name: '👑 管理者試験', value: 'admin' })),
-    
-    // ⏰ 強化された日時各項目設定コマンド
     new SlashCommandBuilder()
         .setName('exam_deadline')
         .setDescription('配属試験の提出期限を項目ごとに設定します（人事部専用）')
@@ -166,7 +167,6 @@ function generateProgressEmbed(examState, userTag) {
     const essayPct = Math.round((essayAnswered / 3) * 100);
     const totalPct = Math.round((answeredCount / totalQuestions) * 100);
 
-    // 視覚的ゲージバーの作成（10マス基準）
     const barLength = 10;
     const filledLength = Math.round((answeredCount / totalQuestions) * barLength);
     const emptyLength = barLength - filledLength;
@@ -325,26 +325,54 @@ client.on('messageCreate', async (message) => {
         const examInfo = EXAM_DATA[examState.type];
         const currentStep = examState.step; 
 
-        // 回答を現在のステップに保存
+        // 回展を現在のステップに保存
         examState.answers.push({
             title: examInfo.questions[currentStep - 1].title,
             answer: message.content
         });
 
-        // 📊 進捗状況の埋め込み（ゲージ＆％表示）を生成
+        // 📊 1つのメッセージを毎回編集・更新する進捗管理ロジック
         const progressEmbed = generateProgressEmbed(examState, message.author.tag);
-        
-        // ① 受験者のDMへ進捗を送信
-        await message.channel.send({ embeds: [progressEmbed] });
+        let msgIds = userProgressMessages.get(userId) || { dmMsgId: null, logMsgId: null };
 
-        // ② 特定の試験ログチャンネル（EXAM_CHANNEL_ID）へリアルタイムに通知送信
+        // ① 受験者DM側の進捗埋め込みを更新
+        if (msgIds.dmMsgId) {
+            try {
+                const existingDmMsg = await message.channel.messages.fetch(msgIds.dmMsgId);
+                await existingDmMsg.edit({ embeds: [progressEmbed] });
+            } catch (e) {
+                const newDmMsg = await message.channel.send({ embeds: [progressEmbed] });
+                msgIds.dmMsgId = newDmMsg.id;
+            }
+        } else {
+            const newDmMsg = await message.channel.send({ embeds: [progressEmbed] });
+            msgIds.dmMsgId = newDmMsg.id;
+        }
+
+        // ② 特定の試験ログチャンネル（EXAM_CHANNEL_ID）側の進捗埋め込みを更新
         const examChannelId = process.env.EXAM_CHANNEL_ID;
         if (examChannelId) {
             try {
                 const examChannel = await client.channels.fetch(examChannelId);
-                if (examChannel) await examChannel.send({ embeds: [progressEmbed] });
-            } catch (e) { console.error('進捗ログ送信エラー:', e); }
+                if (examChannel) {
+                    if (msgIds.logMsgId) {
+                        try {
+                            const existingLogMsg = await examChannel.messages.fetch(msgIds.logMsgId);
+                            await existingLogMsg.edit({ embeds: [progressEmbed] });
+                        } catch (e) {
+                            const newLogMsg = await examChannel.send({ embeds: [progressEmbed] });
+                            msgIds.logMsgId = newLogMsg.id;
+                        }
+                    } else {
+                        const newLogMsg = await examChannel.send({ embeds: [progressEmbed] });
+                        msgIds.logMsgId = newLogMsg.id;
+                    }
+                }
+            } catch (e) { console.error('進捗ログ更新エラー:', e); }
         }
+
+        // ユーザー固有の進捗メッセージデータをマップに保存（混ざらないように保護）
+        userProgressMessages.set(userId, msgIds);
 
         // まだ次の問題がある場合
         if (currentStep < 7) {
@@ -361,17 +389,24 @@ client.on('messageCreate', async (message) => {
 
         // 全7問すべて回答し終わった場合
         activeExams.delete(userId);
+        userProgressMessages.delete(userId); // 終わったら進捗メッセージデータをクリア
 
-        await message.channel.send('⏳ **全7問の回答をすべて回収しました！現在、高性能AIが適正度を厳密に分析・採点しています。このまま15秒ほどお待ちください...**');
+        await message.channel.send('⏳ **全7問の回答をすべて回収しました！現在、高性能AIが適正度を厳密に分析・配属判定をしています。このまま15秒ほどお待ちください...**');
 
-        // 🧠 強力なAI人事判定システム
+        // 🧠 強力なAI人事・配属判定システム
         let aiEvaluation = "";
         try {
-            const prompt = `あなたはDiscordサーバーの人事責任者AIです。受験者から送られた回答を厳格に審査し、採点してください。
-選択問題（第1〜4問）の正解はすべて「B」です。AやC、あるいは「あああ」など無意味な文字・不正解は容赦なく0点（大幅減点）にしてください。
-記述問題（第5〜7問）に「あああ」などの適当な文字列や無意味な文章が入力されていた場合も、その問題は0点にしてください。手抜きは絶対に見逃さないでください。
+            const prompt = `あなたはDiscordサーバーの最高人事責任者AIです。受験者から送られた全7問の回答を厳格に審査し、100点満点で採点した上で、最適な【最終配属先】を決定してください。
 
-【試験名】: ${examInfo.name}
+【採点ルール】
+・選択問題（第1〜4問）の正解はすべて「B」です。それ以外や無意味な入力は容赦なく0点（大幅減点）にしてください。
+・記述問題（第5〜7問）に「あああ」等の手抜きや無意味な入力があった場合も、その問題は0点にしてください。
+
+【配属判定ルール】
+回答内容が非常に優秀で、高いリーダーシップや危機管理能力、コミュニティ活性化の視点を持っていると判断した場合、受けている試験の種類に関わらず「👑 管理者」への飛び級・抜擢配属（または管理者候補生として採用）を決定してください。
+基準を満たしているが一般的な対応力の場合は「🛡️ モデレーター」への配属とし、手抜き回答や正解率が著しく低い場合は「❌ 不採用」としてください。
+
+【元々の試験名】: ${examInfo.name}
 【第1問回答】: ${examState.answers[0].answer}
 【第2問回答】: ${examState.answers[1].answer}
 【第3問回答】: ${examState.answers[2].answer}
@@ -382,11 +417,12 @@ client.on('messageCreate', async (message) => {
 
 上記を確認し、必ず以下のフォーマットのみで厳しく判定を出力してください。
 【AI採点結果】: ○○点 / 100点
-【適正評価寸評】: （ここに、選択の正誤や、記述が適当か真面目かを踏まえた150文字以内の辛口な評価文）`;
+【推奨する配属先】: （「👑 管理者」「🛡️ モデレーター」「❌ 不採用」のいずれかを必ず明記）
+【適正評価・配属理由寸評】: （選択の正誤や記述の質、なぜその配属先に決定したかの理由を180文字以内で記述）`;
 
             const response = await axios.post('https://chateverywhere.app/api/chat/', {
                 messages: [
-                    { role: "system", content: "手抜き回答や無意味な入力を厳しく見抜く採点AI。指定フォーマットを厳守すること。" },
+                    { role: "system", content: "最高人事責任者として厳格に採点と配属先（管理者への抜擢含む）をジャッジするAI。" },
                     { role: "user", content: prompt }
                 ],
                 model: "llama-3.1-70b"
@@ -399,15 +435,7 @@ client.on('messageCreate', async (message) => {
 
         // セーフティ・バックアップ採点
         if (!aiEvaluation) {
-            let score = 0;
-            if (examState.answers[0].answer.toUpperCase().includes('B')) score += 15;
-            if (examState.answers[1].answer.toUpperCase().includes('B')) score += 15;
-            if (examState.answers[2].answer.toUpperCase().includes('B')) score += 15;
-            if (examState.answers[3].answer.toUpperCase().includes('B')) score += 15;
-            if (examState.answers[4].answer.length > 6 && !/^[あいうえおぁぃぅぇぉ宛頭安アアン]+$/.test(examState.answers[4].answer)) score += 14;
-            if (examState.answers[5].answer.length > 6 && !/^[あいうえおぁぃぅぇぉ宛頭安アアン]+$/.test(examState.answers[5].answer)) score += 13;
-            if (examState.answers[6].answer.length > 6 && !/^[あいうえおぁぃぅぇぉ宛頭安アアン]+$/.test(examState.answers[6].answer)) score += 13;
-            aiEvaluation = `【AI採点結果】: **${score}点 / 100点**\n【適正評価寸評】: (自動セーフティガード) 不正解および手抜き回答（あああ等）を厳しく無得点として自動算出しました。最終的な配属可否は運営で決定してください。`;
+            aiEvaluation = `【AI採点結果】: 判定エラー / 100点\n【推奨する配属先】: 🛡️ モデレーター (要手動確認)\n【適正評価・配属理由寸評】: AI通信エラーが発生したため、通常のモデレーター役職への仮配属を推奨します。運営陣でログを確認の上、必要に応じて管理者へ昇格させてください。`;
         }
 
         // 📝 試験終了時の最終レポートをログチャンネル（EXAM_CHANNEL_ID）へ送信
@@ -427,7 +455,7 @@ client.on('messageCreate', async (message) => {
                             { name: `❓ ${examInfo.questions[4].title}`, value: examState.answers[4].answer, inline: false },
                             { name: `❓ ${examInfo.questions[5].title}`, value: examState.answers[5].answer, inline: false },
                             { name: `❓ ${examInfo.questions[6].title}`, value: examState.answers[6].answer, inline: false },
-                            { name: '🤖 AIによる二重審査判定', value: aiEvaluation, inline: false }
+                            { name: '🤖 AIによる総合人事判定・最終配属先候補', value: aiEvaluation, inline: false }
                         )
                         .setTimestamp();
                     await examChannel.send({ embeds: [embed] });
@@ -532,27 +560,23 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // --- ⏰ /exam_deadline コマンド (年月日時分 各項目指定バージョン) ---
     if (commandName === 'exam_deadline') {
         const isHR = interaction.member.roles.cache.some(role => role.name === HR_ROLE_NAME);
         if (!isHR) return interaction.reply({ content: `⚠️ このコマンドは「${HR_ROLE_NAME}」ロールを持つ人だけが実行可能です。`, ephemeral: true });
 
         const year = interaction.options.getInteger('year');
 
-        // 年が 0 なら期限をクリア
         if (year === 0) {
             examDeadline = null;
             return interaction.reply({ content: '✅ 試験の提出期限を解除（無期限に設定）しました。' });
         }
 
-        // 現在の時刻を取得してデフォルト値にするバックアップ
         const now = new Date();
         const month = interaction.options.getInteger('month') ?? (now.getMonth() + 1);
         const day = interaction.options.getInteger('day') ?? now.getDate();
         const hour = interaction.options.getInteger('hour') ?? 23;
         const minute = interaction.options.getInteger('minute') ?? 59;
 
-        // 月は 0-11 で指定する必要があるため -1 する
         const parsedDate = new Date(year, month - 1, day, hour, minute, 0);
 
         if (isNaN(parsedDate.getTime())) {
