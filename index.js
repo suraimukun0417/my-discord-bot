@@ -8,16 +8,11 @@ const axios = require('axios');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.get('/', (req, res) => {
-    res.send('Bot is running!');
-});
-
-app.listen(PORT, () => {
-    console.log(`Web server is listening on port ${PORT}`);
-});
+app.get('/', (req, res) => { res.send('Bot is running!'); });
+app.listen(PORT, () => { console.log(`Web server is listening on port ${PORT}`); });
 
 // ==========================================
-// 2. 初期設定・環境変数・試験データ
+// 2. 初期設定・環境変数・グローバル管理データ
 // ==========================================
 const client = new Client({
     intents: [
@@ -29,8 +24,9 @@ const client = new Client({
     partials: ['Channel']
 });
 
-// 🔴 操作を許可するロール（役職）の名前を設定してください
-const ALLOWED_ROLE_NAME = "ボット管理"; 
+// 🔴 操作を制限する役職（ロール）の名前
+const HR_ROLE_NAME = "人事部【Human Resources】"; 
+const ALLOWED_ROLE_NAME = "ボット管理"; // 旧管理コマンド用
 
 const STATUS_TEMPLATES = {
     online: "🟢オンライン ⋯ 稼働中",
@@ -41,61 +37,40 @@ const STATUS_TEMPLATES = {
 let currentStatus = "online";
 let statusMessageId = null;
 
-// 試験の進行状態を記憶するオブジェクト
-const activeExams = new Map();
+// 試験データ管理用の変数
+const activeExams = new Map();     // 受験者の進行状況
+let examDeadline = null;           // 提出期限（Dateオブジェクト）
 
-// 【超強化】全5問（選択3問、記述2問）の本格的な試験問題データ
+// フォーラムとユーザーDMの双方向マッピング
+const forumToUser = new Map();     // フォーラムID -> ユーザーID
+const userToForum = new Map();     // ユーザーID -> フォーラムID
+
+// 【さらに増量】全7問（選択4問、記述3問）の試験問題
 const EXAM_DATA = {
     moderator: {
         name: '🛡️ モデレーター試験',
         color: '#3498DB',
         questions: [
-            {
-                title: '【第1問（選択）】ルール違反の確認',
-                text: '一般ユーザーが「言葉遣いのルール」に明確に違反しているのを発見しました。最初にとるべき行動として適切なものはどれですか？\n\nA: 何も言わずに即座にサーバーからBANする\nB: 公開チャンネル、またはDMで「規約違反に該当する」旨を丁寧に指摘し、注意・警告を与える\nC: 他のモデレーターが気づくまで自分は見て見ぬふりをする'
-            },
-            {
-                title: '【第2問（選択）】大規模な荒らしへの対処',
-                text: '複数のアカウントが同時に無意味な連投（スパム）を始め、チャンネルが機能停止状態になりました。モデレーターとして最優先すべき対応はどれですか？\n\nA: 荒らしユーザー全員にメンションを飛ばして口頭で注意する\nB: 該当チャンネルの書き込み権限を一時的にロック（低速モード等）し、ログを確保した上で適切にキック・BAN等の対処を急ぐ\nC: 荒らしが飽きて自発的にいなくなるまで静観する'
-            },
-            {
-                title: '【第3問（選択）】個人情報の取り扱い',
-                text: 'メンバーが誤って自分や他人の本名・顔写真などの個人情報を公開チャットに送信してしまいました。モデレーターとして適切な対応はどれですか？\n\nA: 本人が気づいて消すまでそのまま放置する\nB: すぐにそのメッセージを削除し、本人にDM等で注意を促すとともに、他の運営に報告する\nC: 面白いのでスクリーンショットを撮って拡散する'
-            },
-            {
-                title: '【第4問（記述）】ユーザー同士の口論への対応',
-                text: '仲の良い常連ユーザー同士が、チャンネル内で激しい口論（喧嘩）を始めてしまい、周りの参加者が困惑しています。あなたはモデレーターとしてどのように声をかけ、どのようにこのトラブルを収めますか？対応方針を具体的に記述してください。'
-            },
-            {
-                title: '【第5問（記述）】モデレーターとしての意気込み',
-                text: 'あなたがこのサーバーのモデレーターとして採用された場合、どのような点に気をつけて活動したいですか？あなたの強みや、理想のモデレーター像を自由に記述してください。'
-            }
+            { title: '【第1問（選択）】ルール違反の確認', text: '一般ユーザーが「言葉遣いのルール」に明確に違反しているのを発見しました。最初にとるべき行動として適切なものはどれですか？\n\nA: 何も言わずに即座にサーバーからBANする\nB: 公開チャンネル、またはDMで注意・警告を与える\nC: 見て見ぬふりをする' },
+            { title: '【第2問（選択）】大規模な荒らしへの対処', text: '複数のアカウントが同時に無意味な連投（スパム）を始めました。最優先すべき対応はどれですか？\n\nA: 荒らしユーザー全員に口頭で注意する\nB: 該当チャンネルの書き込み権限を一時的にロックし、適切にキック・BAN等の対処を行う\nC: 静観する' },
+            { title: '【第3問（選択）】個人情報の取り扱い', text: 'メンバーが誤って他人の本名や写真を送信してしまいました。適切な対応はどれですか？\n\nA: 放置する\nB: すぐにそのメッセージを削除し、本人に注意を促すとともに他の運営に報告する\nC: スクリーンショットを撮って拡散する' },
+            { title: '【第4問（選択）】権限の悪用について', text: '他のモデレーターが権限を悪用し、一般ユーザーを不当にキックしているのを目撃しました。どうすべきですか？\n\nA: 自分も一緒になってキックに加わる\nB: 独断で動かず、ログなどの証拠を確保してすぐに上の管理者に報告・相談する\nC: 喧嘩になるのが嫌なので無視する' },
+            { title: '【第5問（記述）】ユーザー同士の口論への対応', text: '常連ユーザー同士がチャンネル内で激しい口論（喧嘩）を始めてしまいました。あなたはモデレーターとしてどのように声をかけ、どのようにこのトラブルを収めますか？対応方針を具体的に記述してください。' },
+            { title: '【第6問（記述）】新規ユーザーへの配慮', text: 'サーバーに入りたての新規ユーザーが、ルールをよく知らずに雑談禁止のチャンネルで話し始めてしまいました。威圧感を与えずにルールを教えるための案内文章を考えて記述してください。' },
+            { title: '【第7問（記述）】理想のモデレーター像', text: 'あなたがこのサーバーのモデレーターとして採用された場合、どのような点に気をつけて活動したいですか？あなたの強みや意気込みを自由に記述してください。' }
         ]
     },
     admin: {
         name: '👑 管理者試験',
         color: '#E74C3C',
         questions: [
-            {
-                title: '【第1問（選択）】権限設定のトラブル',
-                text: '新しく作成したチャンネルが「一般ユーザーに見えてはいけないのに見えてしまっている」と報告を受けました。管理者として最初に確認すべき項目はどれですか？\n\nA: サーバーの全カテゴリー・チャンネルの閲覧権限（@everyone の権限設定）が正しく拒否されているか確認する\nB: 不具合が起きた原因がわからないので、一度Discordサーバー自体を削除して作り直す\nC: 報告してきたユーザーの勘違いだと思い、特に対処せず放置する'
-            },
-            {
-                title: '【第2問（選択）】ボットの不具合対応',
-                text: 'サーバー内で稼働している主要な管理ボットが、突然コマンドに一切反応しなくなりました。優先すべき対応手順はどれですか？\n\nA: ボットの役職や管理権限をサーバーから即座にすべて剥奪する\nB: ボットのステータスや開発元のアナウンスを確認し、ホスティングプラットフォーム（Render等）のログを見て必要なら再起動を実行する\nC: 他の管理者が直してくれるまで何もせず待つ'
-            },
-            {
-                title: '【第3問（選択）】他の運営メンバーとの衝突',
-                text: 'サーバーの運営方針を巡って、あなたと他の管理者（運営メンバー）の間で意見が真っ向から対立してしまいました。どう行動すべきですか？\n\nA: 自分の意見を通すため、独断でその管理者の権限を剥奪して追放する\nB: お互いの意見のメリット・デメリットを整理し、他のメンバーも交えてミーティング等で冷静に話し合って解決策を決める\nC: 運営を辞めてサーバーを荒らす'
-            },
-            {
-                title: '【第4問（記述）】サーバーの活性化企画',
-                text: 'サーバー内のアクティブユーザー（雑談や活動に参加する人）を今よりも増やし、コミュニティをより活発で魅力的にするために、あなたが管理者になったら実施したい「新しいイベント」「企画」「チャンネルの改善案」などを具体的に記述してください。'
-            },
-            {
-                title: '【第5問（記述）】トラブル発生時の危機管理',
-                text: 'ある日、サーバーが大規模なレイド（大量の荒らしアカウントの襲撃）に遭い、メンバーが不安に陥っています。管理者として、サーバーの復旧手順やメンバーへのアナウンスなど、どのように迅速な対応を行いますか？あなたの危機管理方針を記述してください。'
-            }
+            { title: '【第1問（選択）】権限設定のトラブル', text: '新しく作成したチャンネルが一般ユーザーに見えてしまっていると報告を受けました。最初に確認すべき項目はどれですか？\n\nA: チャンネルの閲覧権限（@everyone の設定）が正しく拒否されているか確認する\nB: 原因がわからないのでサーバー自体を削除して作り直す\nC: 放置する' },
+            { title: '【第2問（選択）】ボットの不具合対応', text: 'サーバー内で稼働している主要ボットが突然コマンドに反応しなくなりました。優先すべき対応手順はどれですか？\n\nA: ボットの役職や管理権限をすべて剥奪する\nB: ボットのステータスや開発元の情報を確認し、ホスティングプラットフォームのログを見て再起動を試みる\nC: 他の管理者が直してくれるまで待つ' },
+            { title: '【第3問（選択）】他の運営メンバーとの衝突', text: '運営方針を巡って、あなたと他の管理者の間で意見が真っ向から対立してしまいました。どう行動すべきですか？\n\nA: 独断でその管理者の権限を剥奪して追放する\nB: お互いの意見のメリット・デメリットを整理し、他のメンバーも交えて冷静に話し合って解決策を決める\nC: 運営を辞めてサーバーを荒らす' },
+            { title: '【第4問（選択）】セキュリティ対策', text: 'サーバーのセキュリティレベル（認証レベル）を変更する際、最も考慮すべきバランスはどれですか？\n\nA: 荒らしを完全に防ぐために一番厳しい設定のまま固定し、新規が入れなくなっても気にしない\nB: 荒らし対策の安全性と、新規ユーザーの参加しやすさ（利便性）のバランスを考慮して適切なレベルを選ぶ\nC: 設定が面倒なので一番低い設定にする' },
+            { title: '【第5問（記述）】サーバーの活性化企画', text: 'サーバー内のアクティブユーザーを今よりも増やし、コミュニティをより活発にするために、あなたが管理者になったら実施したい「新しいイベント」「企画」「改善案」などを具体的に記述してください。' },
+            { title: '【第6問（記述）】トラブル発生時の危機管理', text: 'サーバーが大規模な荒らしアカウントの襲撃（レイド）に遭い、メンバーが不安に陥っています。復旧手順やメンバーへのアナウンスなど、どのように迅速な対応を行いますか？危機管理方針を記述してください。' },
+            { title: '【第7問（記述）】長期的なサーバー運営のビジョン', text: 'あなたが管理者として半年〜1年後にこのサーバーをどのようなコミュニティに成長させたいですか？あなたの長期的なビジョンや目標を自由に記述してください。' }
         ]
     }
 };
@@ -106,86 +81,46 @@ const EXAM_DATA = {
 const commands = [
     new SlashCommandBuilder()
         .setName('status')
-        .setDescription('ボットのステータスを変更します（管理者用）')
-        .addStringOption(option =>
-            option.setName('type')
-                .setDescription('ステータスの種類')
-                .setRequired(true)
-                .addChoices(
-                    { name: '起動 (オンライン)', value: 'online' },
-                    { name: 'メンテ (取り込み中)', value: 'maintenance' },
-                    { name: '停止 (オフライン表示)', value: 'offline' }
-                )),
+        .setDescription('ボットのステータスを変更します')
+        .addStringOption(option => option.setName('type').setDescription('種類').setRequired(true).addChoices({ name: '起動', value: 'online' }, { name: 'メンテ', value: 'maintenance' }, { name: '停止', value: 'offline' })),
     new SlashCommandBuilder()
         .setName('rolepanel')
-        .setDescription('ボタン式ロールパネルを作成します（管理者用）')
-        .addStringOption(option =>
-            option.setName('text')
-                .setDescription('パネルに表示する説明文')
-                .setRequired(true))
-        .addRoleOption(option =>
-            option.setName('role')
-                .setDescription('ボタンで付与するロール')
-                .setRequired(true)),
+        .setDescription('ボタン式ロールパネルを作成します')
+        .addStringOption(option => option.setName('text').setDescription('説明文').setRequired(true))
+        .addRoleOption(option => option.setName('role').setDescription('ロール').setRequired(true)),
     new SlashCommandBuilder()
         .setName('dm_say')
-        .setDescription('特定のユーザーにボットから埋め込みDMを送ります（管理者用）')
-        .addStringOption(option =>
-            option.setName('title')
-                .setDescription('埋め込みのタイトルを入力してください')
-                .setRequired(true))
-        .addStringOption(option =>
-            option.setName('description')
-                .setDescription('埋め込みの本文を入力してください')
-                .setRequired(true))
-        .addUserOption(option =>
-            option.setName('user')
-                .setDescription('送信相手を一覧から選択（IDで指定する場合は空欄）')
-                .setRequired(false))
-        .addStringOption(option =>
-            option.setName('user_id')
-                .setDescription('送信相手のユーザーID（一覧から選んだ場合は空欄）')
-                .setRequired(false)),
+        .setDescription('特定のユーザーにボットから埋め込みDMを送ります')
+        .addStringOption(option => option.setName('title').setDescription('タイトル').setRequired(true))
+        .addStringOption(option => option.setName('description').setDescription('本文').setRequired(true))
+        .addUserOption(option => option.setName('user').setDescription('相手').setRequired(false))
+        .addStringOption(option => option.setName('user_id').setDescription('ID').setRequired(false)),
     new SlashCommandBuilder()
         .setName('ai')
-        .setDescription('最新の高性能AIと自由におしゃべりや質問ができます（超安定・完全会話版）')
-        .addStringOption(option =>
-            option.setName('question')
-                .setDescription('質問や話しかけたい内容を入力してください')
-                .setRequired(true)),
+        .setDescription('AIと自由におしゃべりや質問ができます')
+        .addStringOption(option => option.setName('question').setDescription('質問内容').setRequired(true)),
     new SlashCommandBuilder()
         .setName('janken')
         .setDescription('AIボットとじゃんけん勝負をします！')
-        .addStringOption(option =>
-            option.setName('hand')
-                .setDescription('あなたが出す手を選んでください')
-                .setRequired(true)
-                .addChoices(
-                    { name: '✊ グー', value: 'goo' },
-                    { name: '✌️ チョキ', value: 'choki' },
-                    { name: '🖐️ パー', value: 'paa' }
-                )),
+        .addStringOption(option => option.setName('hand').setDescription('手').setRequired(true).addChoices({ name: '✊ グー', value: 'goo' }, { name: '✌️ チョキ', value: 'choki' }, { name: '🖐️ パー', value: 'paa' })),
+    
+    // 💡 人事部ロール専用：試験送信コマンド
     new SlashCommandBuilder()
         .setName('exam')
-        .setDescription('指定したユーザーのDMに配属試験を送信します（運営・管理者用）')
-        .addUserOption(option =>
-            option.setName('user')
-                .setDescription('試験を受けさせたいメンバーを選択してください')
-                .setRequired(true))
-        .addStringOption(option =>
-            option.setName('type')
-                .setDescription('送信する試験の種類')
-                .setRequired(true)
-                .addChoices(
-                    { name: '🛡️ モデレーター試験', value: 'moderator' },
-                    { name: '👑 管理者試験', value: 'admin' }
-                ))
+        .setDescription('指定したユーザーのDMに配属試験を送信します（人事部専用）')
+        .addUserOption(option => option.setName('user').setDescription('試験を受けさせたいメンバー').setRequired(true))
+        .addStringOption(option => option.setName('type').setDescription('送信する試験の種類').setRequired(true).addChoices({ name: '🛡️ モデレーター試験', value: 'moderator' }, { name: '👑 管理者試験', value: 'admin' })),
+    
+    // 💡 人事部ロール専用：提出期限設定コマンド
+    new SlashCommandBuilder()
+        .setName('exam_deadline')
+        .setDescription('配属試験の提出期限を設定します（人事部専用）')
+        .addIntegerOption(option => option.setName('minutes').setDescription('今から何分後を期限にするか（0で期限解除）').setRequired(true))
 ].map(command => command.toJSON());
 
 // ==========================================
 // 4. 関数定義
 // ==========================================
-
 async function updateStatusMessage() {
     const channelId = process.env.STATUS_CHANNEL_ID;
     if (!channelId) return;
@@ -203,7 +138,7 @@ async function updateStatusMessage() {
             const botMsg = messages.find(m => m.author.id === client.user.id);
             if (botMsg) { await botMsg.edit(content); statusMessageId = botMsg.id; } else { const newMsg = await channel.send(content); statusMessageId = newMsg.id; }
         }
-    } catch (error) { console.error("ステータスの更新に失敗しました:", error); }
+    } catch (error) { console.error(error); }
 }
 
 async function sendToLogChannel(embed) {
@@ -212,69 +147,176 @@ async function sendToLogChannel(embed) {
     try { const logChannel = await client.channels.fetch(logChannelId); if (logChannel) await logChannel.send({ embeds: [embed] }); } catch (error) {}
 }
 
+// 期限超過とフォーラム自動削除を毎秒チェックするタイマー
+setInterval(async () => {
+    if (examDeadline && new Date() > examDeadline) {
+        // 期限切れになった場合、すべてのアクティブな質問フォーラムを自動削除
+        for (const [forumId, userId] of forumToUser.entries()) {
+            try {
+                const thread = await client.channels.fetch(forumId);
+                if (thread) {
+                    await thread.delete('提出期限が切れたため、質問フォーラムを自動削除しました。');
+                }
+            } catch (e) {}
+            // メモリーマップからも削除
+            userToForum.delete(userId);
+            forumToUser.delete(forumId);
+        }
+    }
+}, 5000);
+
 // ==========================================
 // 5. イベントハンドラー
 // ==========================================
-
 client.once('ready', async () => {
-    console.log(`${client.user.tag} がオンラインになりました！`);
-    client.user.setActivity('スラッシュコマンド対応', { type: ActivityType.Custom });
+    console.log(`${client.user.tag} が稼働しました。`);
+    client.user.setActivity('試験システム稼働中', { type: ActivityType.Custom });
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
-    try {
-        await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands });
-        console.log('スラッシュコマンドの登録に成功しました！');
-    } catch (error) { console.error(error); }
+    try { await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands }); } catch (error) { console.error(error); }
     currentStatus = "online";
     await updateStatusMessage();
 });
 
-// DM受信監視イベント（試験全5問のステップ回収システム）
+// DMメッセージ受信 ＆ 質問フォーラム双方向連動システム
 client.on('messageCreate', async (message) => {
-    if (message.author.bot || message.channel.type !== ChannelType.DM) return;
+    if (message.author.bot) return;
 
+    // --- 📥 人事部が「質問フォーラム（スレッド内）」で発言した内容をユーザーDMへ転送 ---
+    if (message.channel.isThread() && forumToUser.has(message.channel.id)) {
+        const targetUserId = forumToUser.get(message.channel.id);
+        try {
+            const targetUser = await client.users.fetch(targetUserId);
+            if (targetUser) {
+                const relayEmbed = new EmbedBuilder()
+                    .setTitle('💬 人事部からの回答・メッセージ')
+                    .setDescription(message.content || '*(ファイル等)*')
+                    .setColor('#2ECC71')
+                    .setTimestamp();
+                await targetUser.send({ embeds: [relayEmbed] });
+                await message.react('✅'); // 転送成功マーク
+            }
+        } catch (e) {
+            await message.reply('❌ ユーザーへのDM転送に失敗しました。（DMが閉じられている可能性があります）');
+        }
+        return;
+    }
+
+    // これ以降はDMチャンネルのみの処理
+    if (message.channel.type !== ChannelType.DM) return;
     const userId = message.author.id;
 
+    // ⏰ 共通：提出期限チェック
+    if (examDeadline && new Date() > examDeadline) {
+        if (activeExams.has(userId)) activeExams.delete(userId);
+        return await message.channel.send('❌ **提出期限が過ぎています。これ以上回答や質問を送信することはできません。**');
+    }
+
+    // ❓ 期限内かつユーザーが「質問」と送信した場合のフォーラム自動作成処理
+    if (message.content.trim() === '質問' && activeExams.has(userId)) {
+        if (userToForum.has(userId)) {
+            return await message.channel.send('💡 すでにあなた専用の質問フォーラムが作成されています。このDMにそのまま質問内容を送信してください。');
+        }
+
+        const forumChannelId = process.env.FORUM_CHANNEL_ID;
+        if (!forumChannelId) {
+            return await message.channel.send('❌ サーバー側のフォーラム設定が整っていません。運営にお伝えください。');
+        }
+
+        try {
+            const forumChannel = await client.channels.fetch(forumChannelId);
+            if (forumChannel && forumChannel.type === ChannelType.GuildForum) {
+                // 新しいフォーラム（スレッド）を作成
+                const thread = await forumChannel.threads.create({
+                    name: `❓ 質問: ${message.author.username} からの試験問い合わせ`,
+                    autoArchiveDuration: 60,
+                    message: {
+                        content: `🔔 **受験者 (${message.author.tag} / ID: ${userId}) からの質問スレッドです。**\nこのスレッド内にメッセージを入力すると、自動的にそのユーザーのDMへ「人事部からの回答」として転送されます。`
+                    },
+                    reason: '試験中の質問対応用匿名スレッド'
+                });
+
+                // 双方向リンクを登録
+                userToForum.set(userId, thread.id);
+                forumToUser.set(thread.id, userId);
+
+                return await message.channel.send('✨ **人事部直通の質問フォーラムがサーバー内に作成されました！**\nこれより、このDMに質問内容を送信すると、人事部へ自動的に転送され、直接会話をすることができます。質問をどうぞ！');
+            }
+        } catch (error) {
+            console.error(error);
+            return await message.channel.send('❌ 質問フォーラムの作成に失敗しました。');
+        }
+    }
+
+    // 📤 質問フォーラムが開いている場合の、ユーザーDMからフォーラムへのメッセージ転送
+    if (userToForum.has(userId)) {
+        const threadId = userToForum.get(userId);
+        try {
+            const thread = await client.channels.fetch(threadId);
+            if (thread) {
+                await thread.send(`📬 **[ユーザーからのメッセージ]:** ${message.content}`);
+                await message.react('✉️');
+                // もし「質問」という単語そのものを送っていた場合はここで処理終了
+                if (message.content.trim() === '質問') return;
+            }
+        } catch (e) {
+            userToForum.delete(userId);
+            forumToUser.delete(threadId);
+        }
+    }
+
+    // 📝 試験の全7問ステップ回収・採点システム
     if (activeExams.has(userId)) {
         const examState = activeExams.get(userId);
         const examInfo = EXAM_DATA[examState.type];
-        const currentStep = examState.step; // 1〜5
+        const currentStep = examState.step; // 1〜7
 
-        // 現在のステップの回答を保存
+        // 「質問」というコマンド文字自体は回答としてカウントしない
+        if (message.content.trim() === '質問') return;
+
+        // 回答を保存
         examState.answers.push({
             title: examInfo.questions[currentStep - 1].title,
             answer: message.content
         });
 
-        // 次の質問がある場合
-        if (currentStep < 5) {
+        if (currentStep < 7) {
             examState.step += 1;
             activeExams.set(userId, examState);
 
             const nextQuestion = examInfo.questions[examState.step - 1];
             const nextEmbed = new EmbedBuilder()
                 .setTitle(`${examInfo.name} - ${nextQuestion.title}`)
-                .setDescription(`${nextQuestion.text}\n\n*※このメッセージにそのまま回答を入力して送信してください。*`)
+                .setDescription(`${nextQuestion.text}\n\n*※このメッセージにそのまま回答を入力して送信してください。内容に困った際は「**質問**」と送信すると人事部に直接質問できます。*`)
                 .setColor(examInfo.color);
             return await message.channel.send({ embeds: [nextEmbed] });
         }
 
-        // 全5問回答し終わった場合
+        // 全7問すべて回答し終わった場合
         activeExams.delete(userId);
-        await message.channel.send('⏳ **全5問の回答をすべて回収しました！現在、高性能AIが適正度を厳密に分析・採点しています。このまま10秒ほどお待ちください...**');
+        // もし質問フォーラムが開いていたら試験終了と同時に閉じる
+        if (userToForum.has(userId)) {
+            const fid = userToForum.get(userId);
+            try { const th = await client.channels.fetch(fid); if(th) await th.delete(); } catch(e){}
+            userToForum.delete(userId); forumToUser.delete(fid);
+        }
 
-        // 🧠 【バグ修正】確実に高精度で判定を返す強力なAIシステム
+        await message.channel.send('⏳ **全7問の回答をすべて回収しました！現在、高性能AIが適正度を厳密に分析・採点しています。このまま15秒ほどお待ちください...**');
+
+        // 🧠 強力なAI人事判定システム
         let aiEvaluation = "";
         try {
             const prompt = `あなたはDiscordサーバーの人事責任者AIです。受験者から送られた回答を厳格に審査し、採点してください。
-選択問題（第1〜3問）の正解はすべて「B」です。AやC、あるいは「あああ」など無意味な文字・不正解は容赦なく0点（減点）にしてください。
-記述問題（第4〜5問）に「あああ」などの適当な文字列や無意味な文章が入力されていた場合も、その問題は0点にしてください。
+選択問題（第1〜4問）の正解はすべて「B」です。AやC、あるいは「あああ」など無意味な文字・不正解は容赦なく0点（大幅減点）にしてください。
+記述問題（第5〜7問）に「あああ」などの適当な文字列や無意味な文章が入力されていた場合も、その問題は0点にしてください。手抜きは絶対に見逃さないでください。
 
 【試験名】: ${examInfo.name}
 【第1問回答】: ${examState.answers[0].answer}
 【第2問回答】: ${examState.answers[1].answer}
 【第3問回答】: ${examState.answers[2].answer}
-【第4問（記述）】: ${examState.answers[3].answer}
+【第4問回答】: ${examState.answers[3].answer}
 【第5問（記述）】: ${examState.answers[4].answer}
+【第6問（記述）】: ${examState.answers[5].answer}
+【第7問（記述）】: ${examState.answers[6].answer}
 
 上記を確認し、必ず以下のフォーマットのみで厳しく判定を出力してください。
 【AI採点結果】: ○○点 / 100点
@@ -282,36 +324,28 @@ client.on('messageCreate', async (message) => {
 
             const response = await axios.post('https://chateverywhere.app/api/chat/', {
                 messages: [
-                    { role: "system", content: "あなたは手抜き回答や無意味な入力を厳しく見抜く採点AIです。出力形式を厳守してください。" },
+                    { role: "system", content: "手抜き回答や無意味な入力を厳しく見抜く採点AI。指定フォーマットを厳守すること。" },
                     { role: "user", content: prompt }
                 ],
                 model: "llama-3.1-70b"
-            }, {
-                headers: { 'Content-Type': 'application/json' },
-                timeout: 15000
-            });
+            }, { headers: { 'Content-Type': 'application/json' }, timeout: 15000 });
 
-            if (response.data && response.data.choices && response.data.choices[0] && response.data.choices[0].message) {
+            if (response.data?.choices?.[0]?.message?.content) {
                 aiEvaluation = response.data.choices[0].message.content;
-            } else if (typeof response.data === 'string') {
-                aiEvaluation = response.data;
             }
-        } catch (e) {
-            console.error("AI判定エラー:", e);
-        }
+        } catch (e) { console.error(e); }
 
-        // もしAIサーバーが完全に落ちていた場合の安全なローカル判定ロジック（不正対策）
+        // セーフティ・バックアップ採点
         if (!aiEvaluation) {
             let score = 0;
-            if (examState.answers[0].answer.toUpperCase().includes('B')) score += 20;
-            if (examState.answers[1].answer.toUpperCase().includes('B')) score += 20;
-            if (examState.answers[2].answer.toUpperCase().includes('B')) score += 20;
-            
-            // 記述問題の文字数が極端に短い、または「あああ」などの場合は加点しない
-            if (examState.answers[3].answer.length > 5 && !/^[あいうえおぁぃぅぇぉ宛頭安アアン]+$/.test(examState.answers[3].answer)) score += 20;
-            if (examState.answers[4].answer.length > 5 && !/^[あいうえおぁぃぅぇぉ宛頭安アアン]+$/.test(examState.answers[4].answer)) score += 20;
-
-            aiEvaluation = `【AI採点結果】: **${score}点 / 100点**\n【適正評価寸評】: (自動セーフティ判定) 選択問題の正誤、および記述問題の入力文字数とパターンから自動判定を行いました。「あああ」等の手抜きや不正解はすべて無得点として処理されています。`;
+            if (examState.answers[0].answer.toUpperCase().includes('B')) score += 15;
+            if (examState.answers[1].answer.toUpperCase().includes('B')) score += 15;
+            if (examState.answers[2].answer.toUpperCase().includes('B')) score += 15;
+            if (examState.answers[3].answer.toUpperCase().includes('B')) score += 15;
+            if (examState.answers[4].answer.length > 6 && !/^[あいうえおぁぃぅぇぉ宛頭安アアン]+$/.test(examState.answers[4].answer)) score += 14;
+            if (examState.answers[5].answer.length > 6 && !/^[あいうえおぁぃぅぇぉ宛頭安アアン]+$/.test(examState.answers[5].answer)) score += 13;
+            if (examState.answers[6].answer.length > 6 && !/^[あいうえおぁぃぅぇぉ宛頭安アアン]+$/.test(examState.answers[6].answer)) score += 13;
+            aiEvaluation = `【AI採点結果】: **${score}点 / 100点**\n【適正評価寸評】: (自動セーフティガード) 不正解および手抜き回答（あああ等）を厳しく無得点として自動算出しました。最終的な配属可否は運営で決定してください。`;
         }
 
         // 📝 指定された試験ログチャンネル（EXAM_CHANNEL_ID）へ詳細を転送
@@ -330,132 +364,138 @@ client.on('messageCreate', async (message) => {
                             { name: `❓ ${examInfo.questions[2].title}`, value: examState.answers[2].answer, inline: false },
                             { name: `❓ ${examInfo.questions[3].title}`, value: examState.answers[3].answer, inline: false },
                             { name: `❓ ${examInfo.questions[4].title}`, value: examState.answers[4].answer, inline: false },
-                            { name: '🤖 AIによる二重審査判定', value: aiEvaluation, inline: false },
-                            { name: '👥 運営陣による手動最終判断', value: '実際の回答とAI判定の点数を元に、手動で役職を付与するか審査してください。', inline: false }
+                            { name: `❓ ${examInfo.questions[5].title}`, value: examState.answers[5].answer, inline: false },
+                            { name: `❓ ${examInfo.questions[6].title}`, value: examState.answers[6].answer, inline: false },
+                            { name: '🤖 AIによる二重審査判定', value: aiEvaluation, inline: false }
                         )
                         .setTimestamp();
                     await examChannel.send({ embeds: [embed] });
                 }
-            } catch (e) { console.error("ログ送信エラー:", e); }
+            } catch (e) { console.error(e); }
         }
-
-        return await message.channel.send('🎉 **無事にすべての解答が運営陣へ転送されました。試験はこれで終了です！お疲れ様でした！**');
+        return await message.channel.send('🎉 **無事にすべての解答が人事部へ転送されました。試験はこれで終了です！お疲れ様でした！**');
     }
 
-    // 通常の個別DM
+    // 通常DMログ転送
     const logEmbed = new EmbedBuilder().setTitle('📩 ユーザーからのDM受信').setDescription(message.content || '*(テキストなし)*').setColor('#FF9900').addFields({ name: '送信ユーザー', value: `${message.author.tag} (${message.author.id})` }).setTimestamp();
     await sendToLogChannel(logEmbed);
 });
 
 client.on('interactionCreate', async (interaction) => {
-    if (interaction.isChatInputCommand()) {
-        const { commandName } = interaction;
+    if (!interaction.isChatInputCommand()) return;
+    const { commandName } = interaction;
 
-        if (commandName === 'status') {
-            const hasRole = interaction.member.roles.cache.some(role => role.name === ALLOWED_ROLE_NAME);
-            if (!hasRole) return interaction.reply({ content: `⚠️ このコマンドは「${ALLOWED_ROLE_NAME}」役職が必要です。`, ephemeral: true });
-            currentStatus = interaction.options.getString('type');
-            await updateStatusMessage();
-            return interaction.reply({ content: `ステータスを更新しました。`, ephemeral: true });
+    // --- 🚨 旧管理コマンドの権限チェック ---
+    if (['status', 'rolepanel', 'dm_say'].includes(commandName)) {
+        const hasRole = interaction.member.roles.cache.some(role => role.name === ALLOWED_ROLE_NAME);
+        if (!hasRole) return interaction.reply({ content: `⚠️ 権限がありません。`, ephemeral: true });
+    }
+
+    if (commandName === 'status') {
+        currentStatus = interaction.options.getString('type');
+        await updateStatusMessage();
+        return interaction.reply({ content: `ステータスを更新しました。`, ephemeral: true });
+    }
+
+    if (commandName === 'rolepanel') {
+        const text = interaction.options.getString('text');
+        const role = interaction.options.getRole('role');
+        const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`role_${role.id}`).setLabel(`${role.name} を付ける/外す`).setStyle(ButtonStyle.Primary));
+        await interaction.channel.send({ content: text, components: [row] });
+        return interaction.reply({ content: 'ロールパネルを作成しました。', ephemeral: true });
+    }
+
+    if (commandName === 'dm_say') {
+        const title = interaction.options.getString('title');
+        const description = interaction.options.getString('description');
+        const targetUser = interaction.options.getUser('user');
+        const targetUserId = interaction.options.getString('user_id');
+        let user = targetUser;
+        if (!user && targetUserId) { try { user = await client.users.fetch(targetUserId.trim()); } catch (e) {} }
+        if (!user) return interaction.reply({ content: '❌ 送信相手を指定してください。', ephemeral: true });
+        await interaction.deferReply({ ephemeral: true });
+        try {
+            const embed = new EmbedBuilder().setTitle(title).setDescription(description).setColor('#5865F2').setTimestamp();
+            await user.send({ embeds: [embed] });
+            return interaction.editReply({ content: `✅ DMを送信しました。` });
+        } catch (error) { return interaction.editReply({ content: `❌ 送信失敗。` }); }
+    }
+
+    if (commandName === 'ai') {
+        await interaction.deferReply();
+        const question = interaction.options.getString('question');
+        try {
+            const response = await axios.post('https://chateverywhere.app/api/chat/', {
+                messages: [{ role: "system", content: "親切な日本語のアシスタント。" }, { role: "user", content: question }],
+                model: "llama-3.1-70b"
+            }, { timeout: 12000 });
+            return interaction.editReply(`**質問:** ${question}\n\n**AI:** ${response.data?.choices?.[0]?.message?.content || "エラー"}`);
+        } catch (error) { return interaction.editReply("AIエラー"); }
+    }
+
+    if (commandName === 'janken') {
+        const userHand = interaction.options.getString('hand');
+        const hands = ['goo', 'choki', 'paa'];
+        const botHand = hands[Math.floor(Math.random() * hands.length)];
+        const handLabels = { goo: '✊ グー', choki: '✌️ チョキ', paa: '🖐️ パー' };
+        let result = userHand === botHand ? "🤝 あいこ！" : ((userHand==='goo'&&botHand==='choki')||(userHand==='choki'&&botHand==='paa')||(userHand==='paa'&&botHand==='goo')) ? "🎉 あなたの勝ち！" : "👾 ボットの勝ち！";
+        return interaction.reply({ content: `あなた: ${handLabels[userHand]}\nボット: ${handLabels[botHand]}\n\n${result}` });
+    }
+
+    // --- 🛡️ /exam コマンド (人事部ロール専用) ---
+    if (commandName === 'exam') {
+        const isHR = interaction.member.roles.cache.some(role => role.name === HR_ROLE_NAME);
+        if (!isHR) {
+            return interaction.reply({ content: `⚠️ このコマンドは「${HR_ROLE_NAME}」ロールを持つ人だけが実行可能です。`, ephemeral: true });
         }
 
-        if (commandName === 'rolepanel') {
-            const hasRole = interaction.member.roles.cache.some(role => role.name === ALLOWED_ROLE_NAME);
-            if (!hasRole) return interaction.reply({ content: `⚠️ 権限がありません。`, ephemeral: true });
-            const text = interaction.options.getString('text');
-            const role = interaction.options.getRole('role');
-            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`role_${role.id}`).setLabel(`${role.name} を付ける/外す`).setStyle(ButtonStyle.Primary));
-            await interaction.channel.send({ content: text, components: [row] });
-            return interaction.reply({ content: 'ロールパネルを作成しました。', ephemeral: true });
-        }
+        const targetUser = interaction.options.getUser('user');
+        const examType = interaction.options.getString('type');
+        const examInfo = EXAM_DATA[examType];
 
-        if (commandName === 'dm_say') {
-            const hasRole = interaction.member.roles.cache.some(role => role.name === ALLOWED_ROLE_NAME);
-            if (!hasRole) return interaction.reply({ content: `⚠️ 権限がありません。`, ephemeral: true });
-            const title = interaction.options.getString('title');
-            const description = interaction.options.getString('description');
-            const targetUser = interaction.options.getUser('user');
-            const targetUserId = interaction.options.getString('user_id');
-            let user = targetUser;
-            if (!user && targetUserId) { try { user = await client.users.fetch(targetUserId.trim()); } catch (e) { return interaction.reply({ content: '❌ ユーザーIDが見つかりません。', ephemeral: true }); } }
-            if (!user) return interaction.reply({ content: '❌ 送信相手を指定してください。', ephemeral: true });
-            await interaction.deferReply({ ephemeral: true });
-            try {
-                const embed = new EmbedBuilder().setTitle(title).setDescription(description).setColor('#5865F2').setTimestamp();
-                await user.send({ embeds: [embed] });
-                const logEmbed = new EmbedBuilder().setTitle('📤 ボットからのDM送信ログ').setColor('#5865F2').addFields({ name: '宛先', value: `${user.tag}` }, { name: '本文', value: description }).setTimestamp();
-                await sendToLogChannel(logEmbed);
-                return interaction.editReply({ content: `✅ DMを送信しました。` });
-            } catch (error) { return interaction.editReply({ content: `❌ 送信失敗。` }); }
-        }
+        await interaction.deferReply({ ephemeral: true });
 
-        if (commandName === 'ai') {
-            await interaction.deferReply();
-            const question = interaction.options.getString('question');
-            try {
-                const response = await axios.post('https://chateverywhere.app/api/chat/', {
-                    messages: [{ role: "system", content: "親切なアシスタント。日本語で回答。" }, { role: "user", content: question }],
-                    model: "llama-3.1-70b"
-                }, { timeout: 12000 });
-                let aiResponse = response.data?.choices?.[0]?.message?.content || "回答を取得できませんでした。";
-                const replyText = `**質問:** ${question}\n\n**AI:** ${aiResponse}`;
-                return interaction.editReply(replyText.slice(0, 2000));
-            } catch (error) { return interaction.editReply("AIが応答できませんでした。"); }
-        }
+        try {
+            activeExams.set(targetUser.id, { type: examType, step: 1, answers: [] });
 
-        if (commandName === 'janken') {
-            const userHand = interaction.options.getString('hand');
-            const hands = ['goo', 'choki', 'paa'];
-            const botHand = hands[Math.floor(Math.random() * hands.length)];
-            const handLabels = { goo: '✊ グー', choki: '✌️ チョキ', paa: '🖐️ パー' };
-            let result = userHand === botHand ? "🤝 あいこ！" : ((userHand==='goo'&&botHand==='choki')||(userHand==='choki'&&botHand==='paa')||(userHand==='paa'&&botHand==='goo')) ? "🎉 あなたの勝ち！" : "👾 ボットの勝ち！";
-            return interaction.reply({ content: `あなた: ${handLabels[userHand]}\nボット: ${handLabels[botHand]}\n\n${result}` });
-        }
-
-        // --- /exam コマンド ---
-        if (commandName === 'exam') {
-            const hasRole = interaction.member.roles.cache.some(role => role.name === ALLOWED_ROLE_NAME);
-            if (!hasRole) {
-                return interaction.reply({ content: `⚠️ このコマンドは「${ALLOWED_ROLE_NAME}」役職を持つ運営陣のみ実行可能です。`, ephemeral: true });
+            let deadlineNotice = "なし";
+            if (examDeadline) {
+                deadlineNotice = `<t:${Math.floor(examDeadline.getTime() / 1000)}:F> (<t:${Math.floor(examDeadline.getTime() / 1000)}:R>)`;
             }
 
-            const targetUser = interaction.options.getUser('user');
-            const examType = interaction.options.getString('type');
-            const examInfo = EXAM_DATA[examType];
+            const q1Embed = new EmbedBuilder()
+                .setTitle(`📝 ${examInfo.name} の受講案内`)
+                .setDescription(`人事部より配属試験が発行されました。**全7問**あります。\n\n**⏰ 提出期限**: ${deadlineNotice}\n\n*※試験中、わからないことがあれば、このDMに「**質問**」とだけ送信すると人事部と匿名で会話できます。*\n\n**${examInfo.questions[0].title}**\n${examInfo.questions[0].text}\n\n*※このメッセージにそのまま回答を打ち込んで送信してください。*`)
+                .setColor(examInfo.color)
+                .setTimestamp();
 
-            await interaction.deferReply({ ephemeral: true });
-
-            try {
-                // ターゲットユーザーの試験ステータスを初期化 (step 1, 空の回答配列)
-                activeExams.set(targetUser.id, { type: examType, step: 1, answers: [] });
-
-                // 第1問目を送信
-                const q1Embed = new EmbedBuilder()
-                    .setTitle(`📝 ${examInfo.name} の受講案内`)
-                    .setDescription(`運営陣より、あなた宛てに配属採用試験が発行されました。**全5問**あります。順番にDMで回答してください。\n\n**${examInfo.questions[0].title}**\n${examInfo.questions[0].text}\n\n*※このメッセージにそのまま回答を打ち込んで送信してください。*`)
-                    .setColor(examInfo.color)
-                    .setTimestamp();
-
-                await targetUser.send({ embeds: [q1Embed] });
-                return interaction.editReply({ content: `✅ ${targetUser.tag} の個人DMへ「${examInfo.name}」の第1問目を正常に送信しました！` });
-            } catch (error) {
-                console.error(error);
-                activeExams.delete(targetUser.id);
-                return interaction.editReply({ content: `❌ ${targetUser.tag} へDMを送信できませんでした。` });
-            }
+            await targetUser.send({ embeds: [q1Embed] });
+            return interaction.editReply({ content: `✅ ${targetUser.tag} のDMへ「${examInfo.name}」を送信しました。` });
+        } catch (error) {
+            activeExams.delete(targetUser.id);
+            return interaction.editReply({ content: `❌ ${targetUser.tag} へDMを送信できませんでした。` });
         }
     }
 
-    // ロールパネルボタン処理
-    if (interaction.isButton() && interaction.customId.startsWith('role_')) {
-        const roleId = interaction.customId.replace('role_', '');
-        const member = interaction.member;
-        const role = interaction.guild.roles.cache.get(roleId);
-        if (!role) return interaction.reply({ content: 'ロールが見つかりません。', ephemeral: true });
-        try {
-            if (member.roles.cache.has(roleId)) { await member.roles.remove(roleId); return interaction.reply({ content: `ロール「${role.name}」を外しました。`, ephemeral: true }); }
-            else { await member.roles.add(roleId); return interaction.reply({ content: `ロール「${role.name}」を付与しました！`, ephemeral: true }); }
-        } catch (error) { return interaction.reply({ content: '変更失敗。', ephemeral: true }); }
+    // --- ⏰ /exam_deadline コマンド (人事部ロール専用) ---
+    if (commandName === 'exam_deadline') {
+        const isHR = interaction.member.roles.cache.some(role => role.name === HR_ROLE_NAME);
+        if (!isHR) {
+            return interaction.reply({ content: `⚠️ このコマンドは「${HR_ROLE_NAME}」ロールを持つ人だけが実行可能です。`, ephemeral: true });
+        }
+
+        const minutes = interaction.options.getInteger('minutes');
+
+        if (minutes === 0) {
+            examDeadline = null;
+            return interaction.reply({ content: '✅ 試験の提出期限を解除（無期限に設定）しました。' });
+        }
+
+        // 現在時刻から指定分後を設定
+        examDeadline = new Date(Date.now() + minutes * 60000);
+        const timestamp = Math.floor(examDeadline.getTime() / 1000);
+
+        return interaction.reply({ content: `✅ 試験の提出期限を今から **${minutes}分後** に設定しました！\n期限: <t:${timestamp}:F> (<t:${timestamp}:R>)` });
     }
 });
 
