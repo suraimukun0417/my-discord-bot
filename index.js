@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, ActivityType, REST, Routes, SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { Client, GatewayIntentBits, ActivityType, REST, Routes, SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
 const express = require('express');
 const axios = require('axios');
 
@@ -68,7 +68,27 @@ const commands = [
             option.setName('role')
                 .setDescription('ボタンで付与するロール')
                 .setRequired(true)),
-    // 【決定版・超高性能AI】
+    // 復活・強化版：DM埋め込み送信コマンド
+    new SlashCommandBuilder()
+        .setName('dm_say')
+        .setDescription('特定のユーザーにボットから埋め込みDMを送ります（管理者用）')
+        .addStringOption(option =>
+            option.setName('title')
+                .setDescription('埋め込みのタイトルを入力してください')
+                .setRequired(true))
+        .addStringOption(option =>
+            option.setName('description')
+                .setDescription('埋め込みの本文を入力してください')
+                .setRequired(true))
+        .addUserOption(option =>
+            option.setName('user')
+                .setDescription('送信相手を一覧から選択（IDで指定する場合は空欄）')
+                .setRequired(false))
+        .addStringOption(option =>
+            option.setName('user_id')
+                .setDescription('送信相手のユーザーID（一覧から選んだ場合は空欄）')
+                .setRequired(false)),
+    // AI質問コマンド
     new SlashCommandBuilder()
         .setName('ai')
         .setDescription('最新の高性能AIと自由におしゃべりや質問ができます（超安定・完全会話版）')
@@ -194,14 +214,58 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.reply({ content: 'ロールパネルを作成しました。', ephemeral: true });
         }
 
-        // --- /ai コマンド (超安定・登録不要の超高性能会話AI) ---
+        // --- /dm_say コマンド (復活＆機能強化版) ---
+        if (commandName === 'dm_say') {
+            const hasRole = interaction.member.roles.cache.some(role => role.name === ALLOWED_ROLE_NAME);
+            if (!hasRole) {
+                return interaction.reply({ content: `⚠️ このコマンドは「${ALLOWED_ROLE_NAME}」ロールを持つ人のみ実行できます。`, ephemeral: true });
+            }
+
+            const title = interaction.options.getString('title');
+            const description = interaction.options.getString('description');
+            const targetUser = interaction.options.getUser('user');
+            const targetUserId = interaction.options.getString('user_id');
+
+            let user = targetUser;
+
+            // リスト選択がなく、ユーザーIDが手動入力されていた場合はIDからユーザーを探す
+            if (!user && targetUserId) {
+                try {
+                    user = await client.users.fetch(targetUserId.trim());
+                } catch (e) {
+                    return interaction.reply({ content: '❌ 入力されたユーザーIDが見つかりませんでした。正しいIDか確認してください。', ephemeral: true });
+                }
+            }
+
+            if (!user) {
+                return interaction.reply({ content: '❌ 送信相手を一覧から選択するか、ユーザーIDを入力してください。', ephemeral: true });
+            }
+
+            await interaction.deferReply({ ephemeral: true });
+
+            try {
+                // 綺麗な埋め込みメッセージ(Embed)を作成
+                const embed = new EmbedBuilder()
+                    .setTitle(title)
+                    .setDescription(description)
+                    .setColor('#5865F2')
+                    .setTimestamp();
+
+                // DM送信を実行
+                await user.send({ embeds: [embed] });
+                return interaction.editReply({ content: `✅ ${user.tag} に埋め込みDMを正常に送信しました！` });
+            } catch (error) {
+                console.error('DM送信エラー:', error);
+                return interaction.editReply({ content: `❌ DMを送信できませんでした。（相手がDMを閉じてる、またはボットと共通のサーバーにいない可能性があります）` });
+            }
+        }
+
+        // --- /ai コマンド ---
         if (commandName === 'ai') {
             await interaction.deferReply(); 
-
             const question = interaction.options.getString('question');
 
             try {
-                // 最も安定しているパブリックなAIリレーエンドポイント(Llama-3 70B搭載)を使用
                 const response = await axios.post('https://chateverywhere.app/api/chat/', {
                     messages: [
                         { role: "system", content: "あなたはDiscordサーバーで稼働する、とても親切で楽しいAIアシスタントです。ユーザーからの質問やおしゃべりに、すべて日本語で、詳しく親しみやすい文章で回答してください。計算問題は正確に解いてください。" },
@@ -220,7 +284,6 @@ client.on('interactionCreate', async (interaction) => {
                     aiResponse = response.data;
                 }
 
-                // もし応答が取得できなかったか、空だった場合の自動計算フォールバック
                 if (!aiResponse) {
                     try {
                         const calculated = Function(`return ${question.replace(/[^0-9+\-*/().]/g, '')}`)();
@@ -238,15 +301,12 @@ client.on('interactionCreate', async (interaction) => {
                 return interaction.editReply(replyText.slice(0, 2000));
             } catch (error) {
                 console.error('AIエラー:', error);
-                
-                // 完全ローカルな計算バックアップ
                 try {
                     const calculated = Function(`return ${question.replace(/[^0-9+\-*/().]/g, '')}`)();
                     if (calculated !== undefined && !isNaN(calculated)) {
                         return interaction.editReply(`**質問:** ${question}\n\n**AIの回答:**\n計算結果は **${calculated}** です！`);
                     }
                 } catch(e) {}
-
                 return interaction.editReply(`「${question}」ですね！話しかけてくれてありがとうございます！私はいつでもあなたのメッセージを受け取る準備ができていますよ。楽しいお話をしましょう！`);
             }
         }
