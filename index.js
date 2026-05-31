@@ -51,26 +51,26 @@ const EXAM_DATA = {
         name: '🛡️ モデレーター試験',
         color: '#3498DB',
         questions: [
-            { title: '【第1問（選択）】ルール違反の確認', text: '一般ユーザーが「言葉遣いのルール」に明確に違反しているのを発見しました。最初にとるべき行動として適切なものはどれですか？\n\nA: 何も言わずに即座にサーバーからBANする\nB: 公開チャンネル、またはDMで注意・警告を与える\nC: 見て見ぬふりをする' },
-            { title: '【第2問（選択）】大規模な荒らしへの対処', text: '複数のアカウントが同時に無意味な連投（スパム）を始めました。最優先すべき対応はどれですか？\n\nA: 荒らしユーザー全員に口頭で注意する\nB: 該当チャンネルの書き込み権限を一時的にロックし、適切にキック・BAN等の対処を行う\nC: 静観する' },
-            { title: '【第3問（選択）】個人情報の取り扱い', text: 'メンバーが誤って他人の本名や写真を送信してしまいました。適切な対応はどれですか？\n\nA: 放置する\nB: すぐにそのメッセージを削除し、本人に注意を促すとともに他の運営に報告する\nC: スクリーンショットを撮って拡散する' },
-            { title: '【第4問（選択）】権限の悪用について', text: '他のモデレーターが権限を悪用し、一般ユーザーを不当にキックしているのを目撃しました。どうすべきですか？\n\nA: 自分も一緒になってキックに加わる\nB: 独断で動かず、ログなどの証拠を確保してすぐに上の管理者に報告・相談する\nC: 喧嘩になるのが嫌なので無視する' },
-            { title: '【第5問（記述）】ユーザー同士の口論への対応', text: '常連ユーザー同士がチャンネル内で激しい口論（喧嘩）を始めてしまいました。あなたはモデレーターとしてどのように声をかけ、どのようにこのトラブルを収めますか？対応方針を具体的に記述してください。' },
-            { title: '【第6問（記述）】新規ユーザーへの配慮', text: 'サーバーに入りたての新規ユーザーが、ルールをよく知らずに雑談禁止のチャンネルで話し始めてしまいました。威圧感を与えずにルールを教えるための案内文章を考えて記述してください。' },
-            { title: '【第7問（記述）】理想のモデレーター像', text: 'あなたがこのサーバーのモデレーターとして採用された場合、どのような点に気をつけて活動したいですか？あなたの強みや意気込みを自由に記述してください。' }
+            { type: 'choice', title: '【第1問（選択）】ルール違反の確認', text: '一般ユーザーが「言葉遣いのルール」に明確に違反しているのを発見しました。最初にとるべき行動として適切なものはどれですか？\n\nA: 何も言わずに即座にサーバーからBANする\nB: 公開チャンネル、またはDMで注意・警告を与える\nC: 見て見ぬふりをする' },
+            { type: 'choice', title: '【第2問（選択）】大規模な荒らしへの対処', text: '複数のアカウントが同時に無意味な連投（スパム）を始めました。最優先すべき対応はどれですか？\n\nA: 荒らしユーザー全員に口頭で注意する\nB: 該当チャンネルの書き込み権限を一時的にロックし、適切にキック・BAN等の対処を行う\nC: 静観する' },
+            { type: 'choice', title: '【第3問（選択）】個人情報の取り扱い', text: 'メンバーが誤って他人の本名や写真を送信してしまいました。適切な対応はどれですか？\n\nA: 放置する\nB: すぐにそのメッセージを削除し、本人に注意を促すとともに他の運営に報告する\nC: スクリーンショットを撮って拡散する' },
+            { type: 'choice', title: '【第4問（選択）】権限の悪用について', text: '他のモデレーターが権限を悪用し、一般ユーザーを不当にキックしているのを目撃しました。どうすべきですか？\n\nA: 自分も一緒になってキックに加わる\nB: 独断で動かず、ログなどの証拠を確保してすぐに上の管理者に報告・相談する\nC: 喧嘩になるのが嫌なので無視する' },
+            { type: 'essay', title: '【第5問（記述）】ユーザー同士の口論への対応', text: '常連ユーザー同士がチャンネル内で激しい口論（喧嘩）を始めてしまいました。あなたはモデレーターとしてどのように声をかけ、どのようにこのトラブルを収めますか？対応方針を具体的に記述してください。' },
+            { type: 'essay', title: '【第6問（記述）】新規ユーザーへの配慮', text: 'サーバーに入りたての新規ユーザーが、ルールをよく知らずに雑談禁止のチャンネルで話し始めてしまいました。威圧感を与えずにルールを教えるための案内文章を考えて記述してください。' },
+            { type: 'essay', title: '【第7問（記述）】理想のモデレーター像', text: 'あなたがこのサーバーのモデレーターとして採用された場合、どのような点に気をつけて活動したいですか？あなたの強みや意気込みを自由に記述してください。' }
         ]
     },
     admin: {
         name: '👑 管理者試験',
         color: '#E74C3C',
         questions: [
-            { title: '【第1問（選択）】権限設定のトラブル', text: '新しく作成したチャンネルが一般ユーザーに見えてしまっていると報告を受けました。最初に確認すべき項目はどれですか？\n\nA: チャンネルの閲覧権限（@everyone の設定）が正しく拒否されているか確認する\nB: 原因がわからないのでサーバー自体を削除して作り直す\nC: 放置する' },
-            { title: '【第2問（選択）】ボットの不具合対応', text: 'サーバー内で稼働している主要ボットが突然コマンドに反応しなくなりました。優先すべき対応手順はどれですか？\n\nA: ボットの役職や管理権限をすべて剥奪する\nB: ボットのステータスや開発元の情報を確認し、ホスティングプラットフォームのログを見て再起動を試みる\nC: 他の管理者が直してくれるまで待つ' },
-            { title: '【第3問（選択）】他の運営メンバーとの衝突', text: '運営方針を巡って、あなたと他の管理者の間で意見が真っ向から対立してしまいました。どう行動すべきですか？\n\nA: 独断でその管理者の権限を剥奪して追放する\nB: お互いの意見のメリット・デメリットを整理し、他のメンバーも交えて冷静に話し合って解決策を決める\nC: 運営を辞めてサーバーを荒らす' },
-            { title: '【第4問（選択）】セキュリティ対策', text: 'サーバーのセキュリティレベル（認証レベル）を変更する際、最も考慮すべきバランスはどれですか？\n\nA: 荒らしを完全に防ぐために一番厳しい設定のまま固定し、新規が入れなくなっても気にしない\nB: 荒らし対策の安全性と、新規ユーザーの参加しやすさ（利便性）のバランスを考慮して適切なレベルを選ぶ\nC: 設定が面倒なので一番低い設定にする' },
-            { title: '【第5問（記述）】サーバーの活性化企画', text: 'サーバー内のアクティブユーザーを今よりも増やし、コミュニティをより活発にするために、あなたが管理者になったら実施したい「新しいイベント」「企画」「改善案」などを具体的に記述してください。' },
-            { title: '【第6問（記述）】トラブル発生時の危機管理', text: 'サーバーが大規模な荒らしアカウントの襲撃（レイド）に遭い、メンバーが不安に陥っています。復旧手順やメンバーへのアナウンスなど、どのように迅速な対応を行いますか？危機管理方針を記述してください。' },
-            { title: '【第7問（記述）】長期的なサーバー運営のビジョン', text: 'あなたが管理者として半年〜1年後にこのサーバーをどのようなコミュニティに成長させたいですか？あなたの長期的なビジョンや目標を自由に記述してください。' }
+            { type: 'choice', title: '【第1問（選択）】権限設定のトラブル', text: '新しく作成したチャンネルが一般ユーザーに見えてしまっていると報告を受けました。最初に確認すべき項目はどれですか？\n\nA: チャンネルの閲覧権限（@everyone の設定）が正しく拒否されているか確認する\nB: 原因がわからないのでサーバー自体を削除して作り直す\nC: 放置する' },
+            { type: 'choice', title: '【第2問（選択）】ボットの不具合対応', text: 'サーバー内で稼働している主要ボットが突然コマンドに反応しなくなりました。優先すべき対応手順はどれですか？\n\nA: ボットの役職や管理権限をすべて剥奪する\nB: ボットのステータスや開発元の情報を確認し、ホスティングプラットフォームのログを見て再起動を試みる\nC: 他の管理者が直してくれるまで待つ' },
+            { type: 'choice', title: '【第3問（選択）】他の運営メンバーとの衝突', text: '運営方針を巡って、あなたと他の管理者の間で意見が真っ向から対立してしまいました。どう行動すべきですか？\n\nA: 独断でその管理者の権限を剥奪して追放する\nB: お互いの意見のメリット・デメリットを整理し、他のメンバーも交えて冷静に話し合って解決策を決める\nC: 運営を辞めてサーバーを荒らす' },
+            { type: 'choice', title: '【第4問（選択）】セキュリティ対策', text: 'サーバーのセキュリティレベル（認証レベル）を変更する際、最も考慮すべきバランスはどれですか？\n\nA: 荒らしを完全に防ぐために一番厳しい設定のまま固定し、新規が入れなくなっても気にしない\nB: 荒らし対策の安全性と、新規ユーザーの参加しやすさ（利便性）のバランスを考慮して適切なレベルを選ぶ\nC: 設定が面倒なので一番低い設定にする' },
+            { type: 'essay', title: '【第5問（記述）】サーバーの活性化企画', text: 'サーバー内のアクティブユーザーを今よりも増やし、コミュニティをより活発にするために、あなたが管理者になったら実施したい「新しいイベント」「企画」「改善案」などを具体的に記述してください。' },
+            { type: 'essay', title: '【第6問（記述）】トラブル発生時の危機管理', text: 'サーバーが大規模な荒らしアカウントの襲撃（レイド）に遭い、メンバーが不安に陥っています。復旧手順やメンバーへのアナウンスなど、どのように迅速な対応を行いますか？危機管理方針を記述してください。' },
+            { type: 'essay', title: '【第7問（記述）】長期的なサーバー運営のビジョン', text: 'あなたが管理者として半年〜1年後にこのサーバーをどのようなコミュニティに成長させたいですか？あなたの長期的なビジョンや目標を自由に記述してください。' }
         ]
     }
 };
@@ -110,8 +110,8 @@ const commands = [
         .addStringOption(option => option.setName('type').setDescription('送信する試験の種類').setRequired(true).addChoices({ name: '🛡️ モデレーター試験', value: 'moderator' }, { name: '👑 管理者試験', value: 'admin' })),
     new SlashCommandBuilder()
         .setName('exam_deadline')
-        .setDescription('配属試験の提出期限を設定します（人事部専用）')
-        .addIntegerOption(option => option.setName('minutes').setDescription('今から何分後を期限にするか（0で期限解除）').setRequired(true))
+        .setDescription('配属試験の提出期限を「日時」で設定します（人事部専用）')
+        .addStringOption(option => option.setName('date').setDescription('期限日時を入力 (例: 2026-06-05 23:59、解除は 0)').setRequired(true))
 ].map(command => command.toJSON());
 
 // ==========================================
@@ -143,13 +143,42 @@ async function sendToLogChannel(embed) {
     try { const logChannel = await client.channels.fetch(logChannelId); if (logChannel) await logChannel.send({ embeds: [embed] }); } catch (error) {}
 }
 
-// 期限超過とフォーラム自動削除を毎秒チェックするタイマー
+// 進捗埋め込みを生成するヘルパー関数
+function generateProgressEmbed(examState, examInfo) {
+    const totalQuestions = 7;
+    const answeredCount = examState.answers.length;
+
+    // 選択問題(1-4問)と記述問題(5-7問)のカウント
+    let choiceAnswered = 0;
+    let essayAnswered = 0;
+
+    examState.answers.forEach((ans, index) => {
+        if (index < 4) choiceAnswered++;
+        else essayAnswered++;
+    });
+
+    const choicePct = Math.round((choiceAnswered / 4) * 100);
+    const essayPct = Math.round((essayAnswered / 3) * 100);
+    const totalPct = Math.round((answeredCount / totalQuestions) * 100);
+
+    return new EmbedBuilder()
+        .setTitle('📊 あなたの試験進行状況')
+        .setColor('#9B59B6')
+        .setDescription(`**現在の全体進捗:** \`${totalPct}%\` (${answeredCount} / ${totalQuestions} 問完了)`)
+        .addFields(
+            { name: '📝 選択問題 (第1〜4問)', value: `\`${choicePct}%\`完了 (${choiceAnswered} / 4)`, inline: true },
+            { name: '✍️ 記述問題 (第5〜7問)', value: `\`${essayPct}%\`完了 (${essayAnswered} / 3)`, inline: true }
+        )
+        .setFooter({ text: '※「質問」と送信すると、いつでも人事部に質問できます。' });
+}
+
+// 期限超過とフォーラム自動削除をチェックするタイマー
 setInterval(async () => {
     if (examDeadline && new Date() > examDeadline) {
         for (const [forumId, userId] of forumToUser.entries()) {
             try {
                 const thread = await client.channels.fetch(forumId);
-                if (thread) await thread.delete('提出期限が切れたため、質問フォーラムを自動削除しました。');
+                if (thread) await thread.delete('提出期限が切れたため自動削除しました。');
             } catch (e) {}
             userToForum.delete(userId);
             forumToUser.delete(forumId);
@@ -161,15 +190,14 @@ setInterval(async () => {
 // 5. イベントハンドラー
 // ==========================================
 client.once('ready', async () => {
-    console.log(`${client.user.tag} が稼働しました。`);
-    client.user.setActivity('試験システム稼働中', { type: ActivityType.Custom });
+    console.log(`${client.user.tag} が起動しました。`);
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     try { await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands }); } catch (error) { console.error(error); }
     currentStatus = "online";
     await updateStatusMessage();
 });
 
-// DMメッセージ受信 ＆ 質問フォーラム双方向連動システム
+// DMメッセージ受信 ＆ 質問フォーラムシステム
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
@@ -197,22 +225,20 @@ client.on('messageCreate', async (message) => {
     if (message.channel.type !== ChannelType.DM) return;
     const userId = message.author.id;
 
-    // ⏰ 共通：提出期限チェック
+    // ⏰ 提出期限チェック
     if (examDeadline && new Date() > examDeadline) {
         if (activeExams.has(userId)) activeExams.delete(userId);
         return await message.channel.send('❌ **提出期限が過ぎています。これ以上回答や質問を送信することはできません。**');
     }
 
-    // ❓ 試験中、ユーザーが「質問」と送信した場合のフォーラム自動作成
+    // ❓ ユーザーが「質問」と送信した場合のフォーラム自動作成
     if (message.content.trim() === '質問' && activeExams.has(userId)) {
         if (userToForum.has(userId)) {
-            return await message.channel.send('💡 すでに質問フォーラムが開いています。このまま質問内容を送信してください。終わる場合は「**質問終了**」と送信してください。');
+            return await message.channel.send('💡 すでに質問モードに入っています。このまま質問内容を送信してください。終わる場合は「**質問終了**」と送信してください。');
         }
 
         const forumChannelId = process.env.FORUM_CHANNEL_ID;
-        if (!forumChannelId) {
-            return await message.channel.send('❌ サーバー側のフォーラム設定が整っていません。');
-        }
+        if (!forumChannelId) return await message.channel.send('❌ サーバー側のフォーラム設定が整っていません。');
 
         try {
             const forumChannel = await client.channels.fetch(forumChannelId);
@@ -221,15 +247,14 @@ client.on('messageCreate', async (message) => {
                     name: `❓ 質問: ${message.author.username} からの試験問い合わせ`,
                     autoArchiveDuration: 60,
                     message: {
-                        content: `🔔 **受験者 (${message.author.tag} / ID: ${userId}) からの質問スレッドです。**\nこのスレッド内にメッセージを入力すると、自動的にそのユーザーのDMへ「人事部からの回答」として転送されます。`
-                    },
-                    reason: '試験中の質問対応用匿名スレッド'
+                        content: `🔔 **受験者 (${message.author.tag} / ID: ${userId}) からの質問スレッドです。**\nこのスレッド内に発言すると、自動的にユーザーのDMへ転送されます。`
+                    }
                 });
 
                 userToForum.set(userId, thread.id);
                 forumToUser.set(thread.id, userId);
 
-                return await message.channel.send('✨ **人事部直通の質問フォーラムが新規作成されました！**\nこれより、このDMに入力した内容はすべて人事部へ転送されます。質問をどうぞ！\n\n*※質問が終わったら「**質問終了**」と送信すると、試験回答モードに戻ります。*');
+                return await message.channel.send('✨ **人事部直通の質問フォーラムが新規作成されました！**\nこれより、このDMに入力した内容はすべて人事部へ転送され、**問題の回答としてはカウントされません**。質問をどうぞ！\n\n*※質問が終わったら「**質問終了**」と送信すると、試験回答モードに戻ります。*');
             }
         } catch (error) {
             console.error(error);
@@ -247,42 +272,41 @@ client.on('messageCreate', async (message) => {
         try {
             const thread = await client.channels.fetch(threadId);
             if (thread) {
-                await thread.send('🔒 **ユーザーが「質問終了」を宣言したため、この対話スレッドを閉じます（自動削除）。**');
+                await thread.send('🔒 **ユーザーが「質問終了」を宣言したため、この対話スレッドを削除します。**');
                 await thread.delete();
             }
         } catch (e) {}
 
-        // マップから削除
         userToForum.delete(userId);
         forumToUser.delete(threadId);
 
-        // 現在止まっていた問題を再案内して回答モードに完全復帰させる
+        // 現在止まっていた問題を再案内して「回答モード」に完全復帰させる
         const examState = activeExams.get(userId);
         const examInfo = EXAM_DATA[examState.type];
         const currentQuestion = examInfo.questions[examState.step - 1];
 
         const resumeEmbed = new EmbedBuilder()
-            .setTitle(`↩️ 試験に戻りました: ${currentQuestion.title}`)
-            .setDescription(`${currentQuestion.text}\n\n*※質問モードは終了しました。この問題への回答を送信してください。再度質問したい場合は「**質問**」と送信してください。*`)
+            .setTitle(`↩️ 試験回答モードに戻りました`)
+            .setDescription(`質問モードが終了しました。以下の問題への【回答】を入力して送信してください。\n\n**${currentQuestion.title}**\n${currentQuestion.text}`)
             .setColor(examInfo.color);
 
         return await message.channel.send({ embeds: [resumeEmbed] });
     }
 
-    // 📤 質問モード中のメッセージ転送（質問中のメッセージは回答として扱わずガードする）
+    // 📤 【バグ修正ガード】質問モード中のメッセージ転送
     if (userToForum.has(userId)) {
         const threadId = userToForum.get(userId);
         try {
             const thread = await client.channels.fetch(threadId);
             if (thread) {
-                await thread.send(`📬 **[ユーザーからの質問メッセージ]:** ${message.content}`);
+                await thread.send(`📬 **[ユーザーからの質問]:** ${message.content}`);
                 await message.react('✉️');
             }
         } catch (e) {
             userToForum.delete(userId);
             forumToUser.delete(threadId);
         }
-        return; // ⚠️ ここで終了。質問中は問題は絶対に進みません！
+        return; // ⚠️ 超重要：質問モード中はここで処理を終了させ、問題は絶対に先に進まないようにします！
     }
 
     // 📝 通常の試験回答システム（全7問ステップ回収）
@@ -291,12 +315,17 @@ client.on('messageCreate', async (message) => {
         const examInfo = EXAM_DATA[examState.type];
         const currentStep = examState.step; // 1〜7
 
-        // 回答を保存
+        // 回答を現在のステップに保存
         examState.answers.push({
             title: examInfo.questions[currentStep - 1].title,
             answer: message.content
         });
 
+        // 進捗状況の埋め込みを送信
+        const progressEmbed = generateProgressEmbed(examState, examInfo);
+        await message.channel.send({ embeds: [progressEmbed] });
+
+        // まだ次の問題がある場合
         if (currentStep < 7) {
             examState.step += 1;
             activeExams.set(userId, examState);
@@ -304,7 +333,7 @@ client.on('messageCreate', async (message) => {
             const nextQuestion = examInfo.questions[examState.step - 1];
             const nextEmbed = new EmbedBuilder()
                 .setTitle(`${examInfo.name} - ${nextQuestion.title}`)
-                .setDescription(`${nextQuestion.text}\n\n*※このメッセージにそのまま回答を入力して送信してください。内容に困った際は「**質問**」と送信すると人事部に直接質問できます。*`)
+                .setDescription(`${nextQuestion.text}\n\n*※このメッセージにそのまま回答を入力して送信してください。*`)
                 .setColor(examInfo.color);
             return await message.channel.send({ embeds: [nextEmbed] });
         }
@@ -483,19 +512,27 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
+    // --- ⏰ /exam_deadline コマンド (日時形式にアップグレード) ---
     if (commandName === 'exam_deadline') {
         const isHR = interaction.member.roles.cache.some(role => role.name === HR_ROLE_NAME);
         if (!isHR) return interaction.reply({ content: `⚠️ このコマンドは「${HR_ROLE_NAME}」ロールを持つ人だけが実行可能です。`, ephemeral: true });
 
-        const minutes = interaction.options.getInteger('minutes');
-        if (minutes === 0) {
+        const dateString = interaction.options.getString('date').trim();
+
+        if (dateString === '0') {
             examDeadline = null;
-            return interaction.reply({ content: '✅ 試験の提出期限を解除しました。' });
+            return interaction.reply({ content: '✅ 試験の提出期限を解除（無期限に設定）しました。' });
         }
 
-        examDeadline = new Date(Date.now() + minutes * 60000);
+        // 日時文字列をDateオブジェクトにパース
+        const parsedDate = new Date(dateString);
+        if (isNaN(parsedDate.getTime())) {
+            return interaction.reply({ content: '❌ 日時の形式が正しくありません。`YYYY-MM-DD HH:MM` の形式で正確に入力してください。\n例: `2026-06-05 23:59`', ephemeral: true });
+        }
+
+        examDeadline = parsedDate;
         const timestamp = Math.floor(examDeadline.getTime() / 1000);
-        return interaction.reply({ content: `✅ 試験の提出期限を今から **${minutes}分後** に設定しました！\n期限: <t:${timestamp}:F>` });
+        return interaction.reply({ content: `✅ 試験の提出期限を **日時指定** で設定しました！\n設定された期限: <t:${timestamp}:F> (<t:${timestamp}:R>)` });
     }
 });
 
