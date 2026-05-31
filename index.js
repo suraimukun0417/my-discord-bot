@@ -108,10 +108,16 @@ const commands = [
         .setDescription('指定したユーザーのDMに配属試験を送信します（人事部専用）')
         .addUserOption(option => option.setName('user').setDescription('試験を受けさせたいメンバー').setRequired(true))
         .addStringOption(option => option.setName('type').setDescription('送信する試験の種類').setRequired(true).addChoices({ name: '🛡️ モデレーター試験', value: 'moderator' }, { name: '👑 管理者試験', value: 'admin' })),
+    
+    // ⏰ 強化された日時各項目設定コマンド
     new SlashCommandBuilder()
         .setName('exam_deadline')
-        .setDescription('配属試験の提出期限を「日時」で設定します（人事部専用）')
-        .addStringOption(option => option.setName('date').setDescription('期限日時を入力 (例: 2026-06-05 23:59、解除は 0)').setRequired(true))
+        .setDescription('配属試験の提出期限を項目ごとに設定します（人事部専用）')
+        .addIntegerOption(option => option.setName('year').setDescription('年を指定 (例: 2026、解除は 0)').setRequired(true))
+        .addIntegerOption(option => option.setName('month').setDescription('月を指定 (1〜12)').setRequired(false))
+        .addIntegerOption(option => option.setName('day').setDescription('日を指定 (1〜31)').setRequired(false))
+        .addIntegerOption(option => option.setName('hour').setDescription('時を指定 (0〜23)').setRequired(false))
+        .addIntegerOption(option => option.setName('minute').setDescription('分を指定 (0〜59)').setRequired(false))
 ].map(command => command.toJSON());
 
 // ==========================================
@@ -143,12 +149,11 @@ async function sendToLogChannel(embed) {
     try { const logChannel = await client.channels.fetch(logChannelId); if (logChannel) await logChannel.send({ embeds: [embed] }); } catch (error) {}
 }
 
-// 進捗埋め込みを生成するヘルパー関数
-function generateProgressEmbed(examState, examInfo) {
+// 📊 視覚的ゲージ＆％表記の進捗埋め込みを生成する関数
+function generateProgressEmbed(examState, userTag) {
     const totalQuestions = 7;
     const answeredCount = examState.answers.length;
 
-    // 選択問題(1-4問)と記述問題(5-7問)のカウント
     let choiceAnswered = 0;
     let essayAnswered = 0;
 
@@ -161,15 +166,21 @@ function generateProgressEmbed(examState, examInfo) {
     const essayPct = Math.round((essayAnswered / 3) * 100);
     const totalPct = Math.round((answeredCount / totalQuestions) * 100);
 
+    // 視覚的ゲージバーの作成（10マス基準）
+    const barLength = 10;
+    const filledLength = Math.round((answeredCount / totalQuestions) * barLength);
+    const emptyLength = barLength - filledLength;
+    const gaugeBar = '█'.repeat(filledLength) + '░'.repeat(emptyLength);
+
     return new EmbedBuilder()
-        .setTitle('📊 あなたの試験進行状況')
+        .setTitle('📊 試験進行状況アナリティクス')
         .setColor('#9B59B6')
-        .setDescription(`**現在の全体進捗:** \`${totalPct}%\` (${answeredCount} / ${totalQuestions} 問完了)`)
+        .setDescription(`**受験者:** ${userTag}\n\n**全体進捗ゲージ:**\n\`[${gaugeBar}]\` **${totalPct}%** (${answeredCount} / ${totalQuestions} 問完了)`)
         .addFields(
-            { name: '📝 選択問題 (第1〜4問)', value: `\`${choicePct}%\`完了 (${choiceAnswered} / 4)`, inline: true },
-            { name: '✍️ 記述問題 (第5〜7問)', value: `\`${essayPct}%\`完了 (${essayAnswered} / 3)`, inline: true }
+            { name: '📝 選択問題 (第1〜4問)', value: `\`${choicePct}%\` 完了 (${choiceAnswered} / 4)`, inline: true },
+            { name: '✍️ 記述問題 (第5〜7問)', value: `\`${essayPct}%\` 完了 (${essayAnswered} / 3)`, inline: true }
         )
-        .setFooter({ text: '※「質問」と送信すると、いつでも人事部に質問できます。' });
+        .setTimestamp();
 }
 
 // 期限超過とフォーラム自動削除をチェックするタイマー
@@ -280,7 +291,6 @@ client.on('messageCreate', async (message) => {
         userToForum.delete(userId);
         forumToUser.delete(threadId);
 
-        // 現在止まっていた問題を再案内して「回答モード」に完全復帰させる
         const examState = activeExams.get(userId);
         const examInfo = EXAM_DATA[examState.type];
         const currentQuestion = examInfo.questions[examState.step - 1];
@@ -293,7 +303,7 @@ client.on('messageCreate', async (message) => {
         return await message.channel.send({ embeds: [resumeEmbed] });
     }
 
-    // 📤 【バグ修正ガード】質問モード中のメッセージ転送
+    // 📤 質問モード中のメッセージ転送ガード
     if (userToForum.has(userId)) {
         const threadId = userToForum.get(userId);
         try {
@@ -306,14 +316,14 @@ client.on('messageCreate', async (message) => {
             userToForum.delete(userId);
             forumToUser.delete(threadId);
         }
-        return; // ⚠️ 超重要：質問モード中はここで処理を終了させ、問題は絶対に先に進まないようにします！
+        return; 
     }
 
     // 📝 通常の試験回答システム（全7問ステップ回収）
     if (activeExams.has(userId)) {
         const examState = activeExams.get(userId);
         const examInfo = EXAM_DATA[examState.type];
-        const currentStep = examState.step; // 1〜7
+        const currentStep = examState.step; 
 
         // 回答を現在のステップに保存
         examState.answers.push({
@@ -321,9 +331,20 @@ client.on('messageCreate', async (message) => {
             answer: message.content
         });
 
-        // 進捗状況の埋め込みを送信
-        const progressEmbed = generateProgressEmbed(examState, examInfo);
+        // 📊 進捗状況の埋め込み（ゲージ＆％表示）を生成
+        const progressEmbed = generateProgressEmbed(examState, message.author.tag);
+        
+        // ① 受験者のDMへ進捗を送信
         await message.channel.send({ embeds: [progressEmbed] });
+
+        // ② 特定の試験ログチャンネル（EXAM_CHANNEL_ID）へリアルタイムに通知送信
+        const examChannelId = process.env.EXAM_CHANNEL_ID;
+        if (examChannelId) {
+            try {
+                const examChannel = await client.channels.fetch(examChannelId);
+                if (examChannel) await examChannel.send({ embeds: [progressEmbed] });
+            } catch (e) { console.error('進捗ログ送信エラー:', e); }
+        }
 
         // まだ次の問題がある場合
         if (currentStep < 7) {
@@ -389,14 +410,13 @@ client.on('messageCreate', async (message) => {
             aiEvaluation = `【AI採点結果】: **${score}点 / 100点**\n【適正評価寸評】: (自動セーフティガード) 不正解および手抜き回答（あああ等）を厳しく無得点として自動算出しました。最終的な配属可否は運営で決定してください。`;
         }
 
-        // 📝 指定された試験ログチャンネル（EXAM_CHANNEL_ID）へ詳細を転送
-        const examChannelId = process.env.EXAM_CHANNEL_ID;
+        // 📝 試験終了時の最終レポートをログチャンネル（EXAM_CHANNEL_ID）へ送信
         if (examChannelId) {
             try {
                 const examChannel = await client.channels.fetch(examChannelId);
                 if (examChannel) {
                     const embed = new EmbedBuilder()
-                        .setTitle(`📝 配属試験 解答受領: ${examInfo.name}`)
+                        .setTitle(`🏁 配属試験 全解答受領: ${examInfo.name}`)
                         .setColor(examInfo.color)
                         .addFields(
                             { name: '👤 受験ユーザー', value: `${message.author.tag} (${message.author.id})`, inline: false },
@@ -512,27 +532,36 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // --- ⏰ /exam_deadline コマンド (日時形式にアップグレード) ---
+    // --- ⏰ /exam_deadline コマンド (年月日時分 各項目指定バージョン) ---
     if (commandName === 'exam_deadline') {
         const isHR = interaction.member.roles.cache.some(role => role.name === HR_ROLE_NAME);
         if (!isHR) return interaction.reply({ content: `⚠️ このコマンドは「${HR_ROLE_NAME}」ロールを持つ人だけが実行可能です。`, ephemeral: true });
 
-        const dateString = interaction.options.getString('date').trim();
+        const year = interaction.options.getInteger('year');
 
-        if (dateString === '0') {
+        // 年が 0 なら期限をクリア
+        if (year === 0) {
             examDeadline = null;
             return interaction.reply({ content: '✅ 試験の提出期限を解除（無期限に設定）しました。' });
         }
 
-        // 日時文字列をDateオブジェクトにパース
-        const parsedDate = new Date(dateString);
+        // 現在の時刻を取得してデフォルト値にするバックアップ
+        const now = new Date();
+        const month = interaction.options.getInteger('month') ?? (now.getMonth() + 1);
+        const day = interaction.options.getInteger('day') ?? now.getDate();
+        const hour = interaction.options.getInteger('hour') ?? 23;
+        const minute = interaction.options.getInteger('minute') ?? 59;
+
+        // 月は 0-11 で指定する必要があるため -1 する
+        const parsedDate = new Date(year, month - 1, day, hour, minute, 0);
+
         if (isNaN(parsedDate.getTime())) {
-            return interaction.reply({ content: '❌ 日時の形式が正しくありません。`YYYY-MM-DD HH:MM` の形式で正確に入力してください。\n例: `2026-06-05 23:59`', ephemeral: true });
+            return interaction.reply({ content: '❌ 無効な日付が指定されました。各項目の数字が正しいか確認してください。', ephemeral: true });
         }
 
         examDeadline = parsedDate;
         const timestamp = Math.floor(examDeadline.getTime() / 1000);
-        return interaction.reply({ content: `✅ 試験の提出期限を **日時指定** で設定しました！\n設定された期限: <t:${timestamp}:F> (<t:${timestamp}:R>)` });
+        return interaction.reply({ content: `✅ 試験の提出期限を項目指定で設定しました！\n設定された期限: <t:${timestamp}:F> (<t:${timestamp}:R>)` });
     }
 });
 
