@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, ActivityType, REST, Routes, SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ChannelType } = require('discord.js');
+const { Client, GatewayIntentBits, ActivityType, REST, Routes, SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ChannelType, StringSelectMenuBuilder } = require('discord.js');
 const express = require('express');
 const axios = require('axios');
 
@@ -17,16 +17,16 @@ app.listen(PORT, () => {
 });
 
 // ==========================================
-// 2. 初期設定・環境変数
+// 2. 初期設定・環境変数・試験管理用データ
 // ==========================================
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.DirectMessages // DMのメッセージを読み取るために必要
+        GatewayIntentBits.DirectMessages
     ],
-    partials: ['Channel'] // DMを正常に受け取るために必要
+    partials: ['Channel']
 });
 
 // 🔴 操作を許可するロール（役職）の名前を設定してください
@@ -41,11 +41,29 @@ const STATUS_TEMPLATES = {
 let currentStatus = "online";
 let statusMessageId = null;
 
+// 試験の進行状態を一時的に記憶するオブジェクト (ユーザーIDをキーにする)
+const activeExams = new Map();
+
+// 試験問題のデータ定義
+const EXAM_DATA = {
+    moderator: {
+        name: '🛡️ モデレーター試験',
+        color: '#3498DB',
+        q1: '【問題1（選択問題）】\nサーバー内で荒らしを発見した場合の対応として最も適切なものを記号で答えてください。\nA: 即座に独断でBANする\nB: 警告を一度行い、収まらない場合はミュートやBANを検討する\nC: 関わると危険なので無視して放置する',
+        q2: '【問題2（記述問題）】\nユーザー間で激しい喧嘩や口論が起きてしまった時、あなたならモデレーターとしてどのように仲裁に入りますか？対応方針を具体的に教えてください。'
+    },
+    admin: {
+        name: '👑 管理者試験',
+        color: '#E74C3C',
+        q1: '【問題1（選択問題）】\nサーバー内のメインボットに不具合が起き、勝手に動かなくなった際の優先手順として適切なものを記号で答えてください。\nA: すぐにボットの役職や権限をサーバーからすべて剥奪する\nB: 開発ログやステータスを確認し、必要に応じて再起動を試みる\nC: 直らないと面倒なのでボットごとサーバーから削除する',
+        q2: '【問題2（記述問題）】\nサーバーを今よりもっと活発で魅力的にするために、あなたが管理者になったら実施したい新しいイベントや企画、改善案などを自由に記述してください。'
+    }
+};
+
 // ==========================================
 // 3. スラッシュコマンドの登録定義
 // ==========================================
 const commands = [
-    // ステータス変更
     new SlashCommandBuilder()
         .setName('status')
         .setDescription('ボットのステータスを変更します（管理者用）')
@@ -58,7 +76,6 @@ const commands = [
                     { name: 'メンテ (取り込み中)', value: 'maintenance' },
                     { name: '停止 (オフライン表示)', value: 'offline' }
                 )),
-    // ロールパネル作成
     new SlashCommandBuilder()
         .setName('rolepanel')
         .setDescription('ボタン式ロールパネルを作成します（管理者用）')
@@ -70,7 +87,6 @@ const commands = [
             option.setName('role')
                 .setDescription('ボタンで付与するロール')
                 .setRequired(true)),
-    // DM埋め込み送信
     new SlashCommandBuilder()
         .setName('dm_say')
         .setDescription('特定のユーザーにボットから埋め込みDMを送ります（管理者用）')
@@ -90,7 +106,6 @@ const commands = [
             option.setName('user_id')
                 .setDescription('送信相手のユーザーID（一覧から選んだ場合は空欄）')
                 .setRequired(false)),
-    // AI質問コマンド
     new SlashCommandBuilder()
         .setName('ai')
         .setDescription('最新の高性能AIと自由におしゃべりや質問ができます（超安定・完全会話版）')
@@ -98,7 +113,6 @@ const commands = [
             option.setName('question')
                 .setDescription('質問や話しかけたい内容を入力してください')
                 .setRequired(true)),
-    // じゃんけん機能
     new SlashCommandBuilder()
         .setName('janken')
         .setDescription('AIボットとじゃんけん勝負をします！')
@@ -110,65 +124,40 @@ const commands = [
                     { name: '✊ グー', value: 'goo' },
                     { name: '✌️ チョキ', value: 'choki' },
                     { name: '🖐️ パー', value: 'paa' }
-                ))
+                )),
+    new SlashCommandBuilder()
+        .setName('exam')
+        .setDescription('モデレーター・管理者への配属試験を開始します（問題はDMに届きます）')
 ].map(command => command.toJSON());
 
 // ==========================================
 // 4. 関数定義
 // ==========================================
 
-// ステータス・ランプ更新関数
 async function updateStatusMessage() {
     const channelId = process.env.STATUS_CHANNEL_ID;
     if (!channelId) return;
-
     try {
         if (currentStatus === "online") client.user.setStatus('online');
         else if (currentStatus === "maintenance") client.user.setStatus('dnd');
         else if (currentStatus === "offline") client.user.setStatus('invisible');
-
         const channel = await client.channels.fetch(channelId);
         if (!channel) return;
-
         const content = STATUS_TEMPLATES[currentStatus];
-
         if (statusMessageId) {
-            try {
-                const msg = await channel.messages.fetch(statusMessageId);
-                await msg.edit(content);
-            } catch (e) {
-                const newMsg = await channel.send(content);
-                statusMessageId = newMsg.id;
-            }
+            try { const msg = await channel.messages.fetch(statusMessageId); await msg.edit(content); } catch (e) { const newMsg = await channel.send(content); statusMessageId = newMsg.id; }
         } else {
             const messages = await channel.messages.fetch({ limit: 10 });
             const botMsg = messages.find(m => m.author.id === client.user.id);
-
-            if (botMsg) {
-                await botMsg.edit(content);
-                statusMessageId = botMsg.id;
-            } else {
-                const newMsg = await channel.send(content);
-                statusMessageId = newMsg.id;
-            }
+            if (botMsg) { await botMsg.edit(content); statusMessageId = botMsg.id; } else { const newMsg = await channel.send(content); statusMessageId = newMsg.id; }
         }
-    } catch (error) {
-        console.error("ステータスの更新に失敗しました:", error);
-    }
+    } catch (error) { console.error("ステータスの更新に失敗しました:", error); }
 }
 
-// ログチャンネルに埋め込みを送信する共通関数
 async function sendToLogChannel(embed) {
     const logChannelId = process.env.LOG_CHANNEL_ID;
     if (!logChannelId) return;
-    try {
-        const logChannel = await client.channels.fetch(logChannelId);
-        if (logChannel) {
-            await logChannel.send({ embeds: [embed] });
-        }
-    } catch (error) {
-        console.error("ログの送信に失敗しました:", error);
-    }
+    try { const logChannel = await client.channels.fetch(logChannelId); if (logChannel) await logChannel.send({ embeds: [embed] }); } catch (error) {}
 }
 
 // ==========================================
@@ -178,243 +167,224 @@ async function sendToLogChannel(embed) {
 client.once('ready', async () => {
     console.log(`${client.user.tag} がオンラインになりました！`);
     client.user.setActivity('スラッシュコマンド対応', { type: ActivityType.Custom });
-
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     try {
-        console.log('スラッシュコマンドを登録中...');
-        await rest.put(
-            Routes.applicationCommands(process.env.CLIENT_ID),
-            { body: commands },
-        );
+        await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands });
         console.log('スラッシュコマンドの登録に成功しました！');
-    } catch (error) {
-        console.error('コマンドの登録に失敗しました:', error);
-    }
-
+    } catch (error) { console.error(error); }
     currentStatus = "online";
     await updateStatusMessage();
 });
 
-// DM受信を監視する処理（相手からボットへのDM返信をログに流す）
+// DMメッセージ受信イベント（試験回答の回収 ＆ 通常DMログ）
 client.on('messageCreate', async (message) => {
-    // ボット自身の発言、またはDM以外のメッセージは無視
-    if (message.author.bot) return;
-    if (message.channel.type !== ChannelType.DM) return;
+    if (message.author.bot || message.channel.type !== ChannelType.DM) return;
 
-    // 管理ログ用の埋め込みを作成
+    const userId = message.author.id;
+
+    // ユーザーが現在、試験の回答途中であるかチェック
+    if (activeExams.has(userId)) {
+        const examState = activeExams.get(userId);
+        const examInfo = EXAM_DATA[examState.type];
+
+        if (examState.step === 1) {
+            // 問題1の回答を記憶
+            examState.ans1 = message.content;
+            examState.step = 2;
+            activeExams.set(userId, examState);
+
+            // 問題2をDMに送信
+            const q2Embed = new EmbedBuilder()
+                .setTitle(`${examInfo.name} - 第2問`)
+                .setDescription(`${examInfo.q2}\n\n*※このメッセージにそのまま記述して送信（返信）してください。*`)
+                .setColor(examInfo.color);
+            return await message.channel.send({ embeds: [q2Embed] });
+
+        } else if (examState.step === 2) {
+            // 問題2の回答を記憶
+            examState.ans2 = message.content;
+            
+            // 試験状態をクリアして、採点処理へ
+            activeExams.delete(userId);
+
+            await message.channel.send('⏳ **お疲れ様でした！回答を受領しました。現在AIが適正度を一次判定中です。しばらくお待ちください...**');
+
+            // 🧠 AIによる回答の自動審査
+            let aiEvaluation = "AI評価の生成に失敗しました。";
+            try {
+                const prompt = `あなたはDiscordサーバーの最高人事責任者AIです。ユーザーから送られてきた「${examInfo.name}」の回答を厳しく審査し、運営陣向けに評価を出してください。\n\n【問題1: 選択形式】\nユーザーの回答: ${examState.ans1}\n\n【問題2: 記述形式】\nユーザーの回答: ${examState.ans2}\n\n上記を確認し、100点満点中何点か(採点)、およびモデレーターや管理者としての適正があるかどうかの寸評を、150文字以内の日本語で出力してください。`;
+                const response = await axios.post('https://chateverywhere.app/api/chat/', {
+                    messages: [{ role: "user", content: prompt }],
+                    model: "llama-3.1-70b"
+                }, { timeout: 12000 });
+                
+                if (response.data?.choices?.[0]?.message?.content) {
+                    aiEvaluation = response.data.choices[0].message.content;
+                }
+            } catch (error) {
+                aiEvaluation = "⚠️ AIサーバー混雑のため自動採点がスキップされました。運営陣による手動での最終判断をお願いします。";
+            }
+
+            // 📝 指定された試験ログチャンネルへ結果を送信
+            const examChannelId = process.env.EXAM_CHANNEL_ID;
+            if (examChannelId) {
+                try {
+                    const examChannel = await client.channels.fetch(examChannelId);
+                    if (examChannel) {
+                        const embed = new EmbedBuilder()
+                            .setTitle(`📝 試験答案受領: ${examInfo.name}`)
+                            .setColor(examInfo.color)
+                            .addFields(
+                                { name: '👤 受験者', value: `${message.author.tag} (${message.author.id})`, inline: false },
+                                { name: '📥 問題1への回答', value: examState.ans1, inline: false },
+                                { name: '📥 問題2への回答', value: examState.ans2, inline: false },
+                                { name: '🤖 AI一次審査 (適正判定)', value: aiEvaluation, inline: false },
+                                { name: '👥 人間(運営)による手動最終判定', value: '上のAI評価を参考にして、役職を付与するかどうか手動で最終決定してください。', inline: false }
+                            )
+                            .setTimestamp();
+                        await examChannel.send({ embeds: [embed] });
+                    }
+                } catch (e) {
+                    console.error("試験チャンネルへの送信に失敗しました:", e);
+                }
+            }
+
+            return await message.channel.send('🎉 **すべての回答が正常に運営陣へと送信されました！最終判断が出るまで今しばらくお待ちください。ありがとうございました！**');
+        }
+    }
+
+    // 試験中ではない通常のDM受信は、通常通り管理ログチャンネルへ転送
     const logEmbed = new EmbedBuilder()
         .setTitle('📩 ユーザーからのDM受信')
-        .setDescription(message.content || '*(テキストなし・画像等)*')
+        .setDescription(message.content || '*(テキストなし)*')
         .setColor('#FF9900')
-        .addFields(
-            { name: '送信ユーザー', value: `${message.author.tag} (${message.author.id})`, inline: false }
-        )
+        .addFields({ name: '送信ユーザー', value: `${message.author.tag} (${message.author.id})` })
         .setTimestamp();
-
     await sendToLogChannel(logEmbed);
 });
 
 client.on('interactionCreate', async (interaction) => {
+    
+    // スラッシュコマンドの処理
     if (interaction.isChatInputCommand()) {
         const { commandName } = interaction;
 
-        // --- /status コマンド ---
         if (commandName === 'status') {
             const hasRole = interaction.member.roles.cache.some(role => role.name === ALLOWED_ROLE_NAME);
-            if (!hasRole) {
-                return interaction.reply({ content: `⚠️ このコマンドは「${ALLOWED_ROLE_NAME}」ロールを持つ人のみ実行できます。`, ephemeral: true });
-            }
-
+            if (!hasRole) return interaction.reply({ content: `⚠️ このコマンドは「${ALLOWED_ROLE_NAME}」役職が必要です。`, ephemeral: true });
             currentStatus = interaction.options.getString('type');
             await updateStatusMessage();
-            return interaction.reply({ content: `ステータスとランプの色を更新しました。`, ephemeral: true });
+            return interaction.reply({ content: `ステータスを更新しました。`, ephemeral: true });
         }
 
-        // --- /rolepanel コマンド ---
         if (commandName === 'rolepanel') {
             const hasRole = interaction.member.roles.cache.some(role => role.name === ALLOWED_ROLE_NAME);
-            if (!hasRole) {
-                return interaction.reply({ content: `⚠️ このコマンドは「${ALLOWED_ROLE_NAME}」ロールを持つ人のみ実行できます。`, ephemeral: true });
-            }
-
+            if (!hasRole) return interaction.reply({ content: `⚠️ 権限がありません。`, ephemeral: true });
             const text = interaction.options.getString('text');
             const role = interaction.options.getRole('role');
-
-            const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder()
-                    .setCustomId(`role_${role.id}`)
-                    .setLabel(`${role.name} を付ける/外す`)
-                    .setStyle(ButtonStyle.Primary)
-            );
-
+            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`role_${role.id}`).setLabel(`${role.name} を付ける/外す`).setStyle(ButtonStyle.Primary));
             await interaction.channel.send({ content: text, components: [row] });
             return interaction.reply({ content: 'ロールパネルを作成しました。', ephemeral: true });
         }
 
-        // --- /dm_say コマンド ---
         if (commandName === 'dm_say') {
             const hasRole = interaction.member.roles.cache.some(role => role.name === ALLOWED_ROLE_NAME);
-            if (!hasRole) {
-                return interaction.reply({ content: `⚠️ このコマンドは「${ALLOWED_ROLE_NAME}」ロールを持つ人のみ実行できます。`, ephemeral: true });
-            }
-
+            if (!hasRole) return interaction.reply({ content: `⚠️ 権限がありません。`, ephemeral: true });
             const title = interaction.options.getString('title');
             const description = interaction.options.getString('description');
             const targetUser = interaction.options.getUser('user');
             const targetUserId = interaction.options.getString('user_id');
-
             let user = targetUser;
-
-            if (!user && targetUserId) {
-                try {
-                    user = await client.users.fetch(targetUserId.trim());
-                } catch (e) {
-                    return interaction.reply({ content: '❌ 入力されたユーザーIDが見つかりませんでした。正しいIDか確認してください。', ephemeral: true });
-                }
-            }
-
-            if (!user) {
-                return interaction.reply({ content: '❌ 送信相手を一覧から選択するか、ユーザーIDを入力してください。', ephemeral: true });
-            }
-
+            if (!user && targetUserId) { try { user = await client.users.fetch(targetUserId.trim()); } catch (e) { return interaction.reply({ content: '❌ ユーザーIDが見つかりません。', ephemeral: true }); } }
+            if (!user) return interaction.reply({ content: '❌ 送信相手を指定してください。', ephemeral: true });
             await interaction.deferReply({ ephemeral: true });
-
             try {
-                const embed = new EmbedBuilder()
-                    .setTitle(title)
-                    .setDescription(description)
-                    .setColor('#5865F2')
-                    .setTimestamp();
-
+                const embed = new EmbedBuilder().setTitle(title).setDescription(description).setColor('#5865F2').setTimestamp();
                 await user.send({ embeds: [embed] });
-
-                // 【追加】ログ用チャンネルへDM送信記録を転送
-                const logEmbed = new EmbedBuilder()
-                    .setTitle('📤 ボットからのDM送信ログ')
-                    .setColor('#5865F2')
-                    .addFields(
-                        { name: '宛先ユーザー', value: `${user.tag} (${user.id})`, inline: false },
-                        { name: '実行者', value: `${interaction.user.tag}`, inline: true },
-                        { name: 'タイトル', value: title, inline: false },
-                        { name: '本文', value: description, inline: false }
-                    )
-                    .setTimestamp();
+                const logEmbed = new EmbedBuilder().setTitle('📤 ボットからのDM送信ログ').setColor('#5865F2').addFields({ name: '宛先', value: `${user.tag}` }, { name: '本文', value: description }).setTimestamp();
                 await sendToLogChannel(logEmbed);
-
-                return interaction.editReply({ content: `✅ ${user.tag} に埋め込みDMを正常に送信しました！` });
-            } catch (error) {
-                console.error('DM送信エラー:', error);
-                return interaction.editReply({ content: `❌ DMを送信できませんでした。` });
-            }
+                return interaction.editReply({ content: `✅ DMを送信しました。` });
+            } catch (error) { return interaction.editReply({ content: `❌ 送信失敗。` }); }
         }
 
-        // --- /ai コマンド ---
         if (commandName === 'ai') {
-            await interaction.deferReply(); 
+            await interaction.deferReply();
             const question = interaction.options.getString('question');
-
             try {
                 const response = await axios.post('https://chateverywhere.app/api/chat/', {
-                    messages: [
-                        { role: "system", content: "あなたはDiscordサーバーで稼働する、とても親切で楽しいAIアシスタントです。ユーザーからの質問やおしゃべりに、すべて日本語で、詳しく親しみやすい文章で回答してください。計算問題は正確に解いてください。" },
-                        { role: "user", content: question }
-                    ],
+                    messages: [{ role: "system", content: "親切なアシスタント。日本語で回答。" }, { role: "user", content: question }],
                     model: "llama-3.1-70b"
-                }, {
-                    headers: { 'Content-Type': 'application/json' },
-                    timeout: 12000
-                });
-
-                let aiResponse = "";
-                if (response.data && response.data.choices && response.data.choices[0] && response.data.choices[0].message) {
-                    aiResponse = response.data.choices[0].message.content;
-                } else if (typeof response.data === 'string') {
-                    aiResponse = response.data;
-                }
-
-                if (!aiResponse) {
-                    try {
-                        const calculated = Function(`return ${question.replace(/[^0-9+\-*/().]/g, '')}`)();
-                        if (calculated !== undefined && !isNaN(calculated)) {
-                            aiResponse = `計算結果は **${calculated}** です！数学はお任せください。`;
-                        }
-                    } catch(e) {}
-                }
-
-                if (!aiResponse) {
-                    aiResponse = `「${question}」ですね！話しかけてくれて嬉しいです！何かお手伝いできることはありますか？`;
-                }
-
-                // 【追加】ログ用チャンネルへAIのやり取りを転送
-                const logEmbed = new EmbedBuilder()
-                    .setTitle('🤖 AI質問利用ログ')
-                    .setColor('#2ECC71')
-                    .addFields(
-                        { name: '利用者', value: `${interaction.user.tag} (${interaction.user.id})`, inline: false },
-                        { name: '質問内容', value: question, inline: false },
-                        { name: 'AIの回答', value: aiResponse.slice(0, 1024), inline: false }
-                    )
-                    .setTimestamp();
-                await sendToLogChannel(logEmbed);
-
-                const replyText = `**質問:** ${question}\n\n**AIの回答:**\n${aiResponse}`;
+                }, { timeout: 12000 });
+                let aiResponse = response.data?.choices?.[0]?.message?.content || "回答を取得できませんでした。";
+                const replyText = `**質問:** ${question}\n\n**AI:** ${aiResponse}`;
                 return interaction.editReply(replyText.slice(0, 2000));
-            } catch (error) {
-                console.error('AIエラー:', error);
-                const errorReply = `「${question}」ですね！話しかけてくれてありがとうございます！楽しいお話をしましょう！`;
-                return interaction.editReply(errorReply);
-            }
+            } catch (error) { return interaction.editReply("AIが応答できませんでした。"); }
         }
 
-        // --- /janken コマンド ---
         if (commandName === 'janken') {
             const userHand = interaction.options.getString('hand');
             const hands = ['goo', 'choki', 'paa'];
             const botHand = hands[Math.floor(Math.random() * hands.length)];
-
             const handLabels = { goo: '✊ グー', choki: '✌️ チョキ', paa: '🖐️ パー' };
+            let result = userHand === botHand ? "🤝 あいこ！" : ((userHand==='goo'&&botHand==='choki')||(userHand==='choki'&&botHand==='paa')||(userHand==='paa'&&botHand==='goo')) ? "🎉 あなたの勝ち！" : "👾 ボットの勝ち！";
+            return interaction.reply({ content: `あなた: ${handLabels[userHand]}\nボット: ${handLabels[botHand]}\n\n${result}` });
+        }
 
-            let result = "";
-            if (userHand === botHand) {
-                result = "🤝 **あいこです！もう一回勝負しよう！**";
-            } else if (
-                (userHand === 'goo' && botHand === 'choki') ||
-                (userHand === 'choki' && botHand === 'paa') ||
-                (userHand === 'paa' && botHand === 'goo')
-            ) {
-                result = "🎉 **あなたの勝ちです！おめでとう！**";
-            } else {
-                result = "👾 **私の勝ちです！また挑戦してね！**";
-            }
-
-            const replyText = `**じゃんけんぽん！**\n\n・あなた: ${handLabels[userHand]}\n・AIボット: ${handLabels[botHand]}\n\n${result}`;
-            return interaction.reply({ content: replyText });
+        // --- /exam コマンド ---
+        if (commandName === 'exam') {
+            const row = new ActionRowBuilder().addComponents(
+                new StringSelectMenuBuilder()
+                    .setCustomId('select_exam_type')
+                    .setPlaceholder('希望する配属先を選択してください')
+                    .addOptions([
+                        { label: '🛡️ モデレーター試験', description: '荒らし対応やルール維持を行う役職', value: 'moderator' },
+                        { label: '👑 管理者試験', description: 'サーバー設定や運営全般を統括する役職', value: 'admin' }
+                    ])
+            );
+            return interaction.reply({ content: '📝 **配属試験を開始します。** 希望する役職を以下から選択してください。選択するとボットからDMで問題が送られます：', components: [row], ephemeral: true });
         }
     }
 
-    if (interaction.isButton()) {
-        if (interaction.customId.startsWith('role_')) {
-            const roleId = interaction.customId.replace('role_', '');
-            const member = interaction.member;
-            const role = interaction.guild.roles.cache.get(roleId);
-
-            if (!role) {
-                return interaction.reply({ content: '該当するロールが見つかりませんでした。', ephemeral: true });
-            }
+    // セレクトメニュー（試験種類の選択）
+    if (interaction.isStringSelectMenu()) {
+        if (interaction.customId === 'select_exam_type') {
+            const examType = interaction.values[0];
+            const userId = interaction.user.id;
+            const examInfo = EXAM_DATA[examType];
 
             try {
-                if (member.roles.cache.has(roleId)) {
-                    await member.roles.remove(roleId);
-                    return interaction.reply({ content: `ロール「${role.name}」を外しました。`, ephemeral: true });
-                } else {
-                    await member.roles.add(roleId);
-                    return interaction.reply({ content: `ロール「${role.name}」を付与しました！`, ephemeral: true });
-                }
+                // ユーザーの進行状況をリセットして初期化 (ステップ1: 問題1)
+                activeExams.set(userId, { type: examType, step: 1, ans1: '', ans2: '' });
+
+                // 第1問目を埋め込みにしてユーザーの「DM」へ直接送信
+                const q1Embed = new EmbedBuilder()
+                    .setTitle(`📝 ${examInfo.name} が開始されました！`)
+                    .setDescription(`これより配属試験を行います。ボットからの質問に順番にお答えください。\n\n${examInfo.q1}\n\n*※このメッセージにそのまま記号（A, B, Cなど）を入力して送信（返信）してください。*`)
+                    .setColor(examInfo.color)
+                    .setTimestamp();
+
+                await interaction.user.send({ embeds: [q1Embed] });
+
+                // サーバー画面側には案内を表示
+                return await interaction.reply({ content: `✅ あなたのDMに「${examInfo.name}」の第1問目を送信しました！確認して回答を入力してください。`, ephemeral: true });
             } catch (error) {
-                console.error('ロール変更エラー:', error);
-                return interaction.reply({ content: 'ロールの変更に失敗しました。サーバー設定でボットの役職が一番上にあるか確認してください。', ephemeral: true });
+                console.error("DM送信エラー:", error);
+                activeExams.delete(userId);
+                return await interaction.reply({ content: `❌ あなたにDMを送信できませんでした。Discordの設定で「サーバーからのダイレクトメッセージを許可する」がオンになっているか確認してください。`, ephemeral: true });
             }
         }
+    }
+
+    // ロールパネルボタンの処理
+    if (interaction.isButton() && interaction.customId.startsWith('role_')) {
+        const roleId = interaction.customId.replace('role_', '');
+        const member = interaction.member;
+        const role = interaction.guild.roles.cache.get(roleId);
+        if (!role) return interaction.reply({ content: 'ロールが見つかりません。', ephemeral: true });
+        try {
+            if (member.roles.cache.has(roleId)) { await member.roles.remove(roleId); return interaction.reply({ content: `ロール「${role.name}」を外しました。`, ephemeral: true }); }
+            else { await member.roles.add(roleId); return interaction.reply({ content: `ロール「${role.name}」を付与しました！`, ephemeral: true }); }
+        } catch (error) { return interaction.reply({ content: '変更失敗。', ephemeral: true }); }
     }
 });
 
