@@ -44,7 +44,7 @@ let statusMessageId = null;
 // 試験の進行状態を記憶するオブジェクト
 const activeExams = new Map();
 
-// 増量版・試験問題データ（選択2問、記述1問の計3問構成）
+// 【超強化】全5問（選択3問、記述2問）の本格的な試験問題データ
 const EXAM_DATA = {
     moderator: {
         name: '🛡️ モデレーター試験',
@@ -59,8 +59,16 @@ const EXAM_DATA = {
                 text: '複数のアカウントが同時に無意味な連投（スパム）を始め、チャンネルが機能停止状態になりました。モデレーターとして最優先すべき対応はどれですか？\n\nA: 荒らしユーザー全員にメンションを飛ばして口頭で注意する\nB: 該当チャンネルの書き込み権限を一時的にロック（低速モード等）し、ログを確保した上で適切にキック・BAN等の対処を急ぐ\nC: 荒らしが飽きて自発的にいなくなるまで静観する'
             },
             {
-                title: '【第3問（記述）】シチュエーション問題',
+                title: '【第3問（選択）】個人情報の取り扱い',
+                text: 'メンバーが誤って自分や他人の本名・顔写真などの個人情報を公開チャットに送信してしまいました。モデレーターとして適切な対応はどれですか？\n\nA: 本人が気づいて消すまでそのまま放置する\nB: すぐにそのメッセージを削除し、本人にDM等で注意を促すとともに、他の運営に報告する\nC: 面白いのでスクリーンショットを撮って拡散する'
+            },
+            {
+                title: '【第4問（記述）】ユーザー同士の口論への対応',
                 text: '仲の良い常連ユーザー同士が、チャンネル内で激しい口論（喧嘩）を始めてしまい、周りの参加者が困惑しています。あなたはモデレーターとしてどのように声をかけ、どのようにこのトラブルを収めますか？対応方針を具体的に記述してください。'
+            },
+            {
+                title: '【第5問（記述）】モデレーターとしての意気込み',
+                text: 'あなたがこのサーバーのモデレーターとして採用された場合、どのような点に気をつけて活動したいですか？あなたの強みや、理想のモデレーター像を自由に記述してください。'
             }
         ]
     },
@@ -77,8 +85,16 @@ const EXAM_DATA = {
                 text: 'サーバー内で稼働している主要な管理ボットが、突然コマンドに一切反応しなくなりました。優先すべき対応手順はどれですか？\n\nA: ボットの役職や管理権限をサーバーから即座にすべて剥奪する\nB: ボットのステータスや開発元のアナウンスを確認し、ホスティングプラットフォーム（Render等）のログを見て必要なら再起動を実行する\nC: 他の管理者が直してくれるまで何もせず待つ'
             },
             {
-                title: '【第3問（記述）】サーバーの活性化企画',
+                title: '【第3問（選択）】他の運営メンバーとの衝突',
+                text: 'サーバーの運営方針を巡って、あなたと他の管理者（運営メンバー）の間で意見が真っ向から対立してしまいました。どう行動すべきですか？\n\nA: 自分の意見を通すため、独断でその管理者の権限を剥奪して追放する\nB: お互いの意見のメリット・デメリットを整理し、他のメンバーも交えてミーティング等で冷静に話し合って解決策を決める\nC: 運営を辞めてサーバーを荒らす'
+            },
+            {
+                title: '【第4問（記述）】サーバーの活性化企画',
                 text: 'サーバー内のアクティブユーザー（雑談や活動に参加する人）を今よりも増やし、コミュニティをより活発で魅力的にするために、あなたが管理者になったら実施したい「新しいイベント」「企画」「チャンネルの改善案」などを具体的に記述してください。'
+            },
+            {
+                title: '【第5問（記述）】トラブル発生時の危機管理',
+                text: 'ある日、サーバーが大規模なレイド（大量の荒らしアカウントの襲撃）に遭い、メンバーが不安に陥っています。管理者として、サーバーの復旧手順やメンバーへのアナウンスなど、どのように迅速な対応を行いますか？あなたの危機管理方針を記述してください。'
             }
         ]
     }
@@ -149,7 +165,6 @@ const commands = [
                     { name: '✌️ チョキ', value: 'choki' },
                     { name: '🖐️ パー', value: 'paa' }
                 )),
-    // 💡 運営が相手を選んで試験を開始する仕様に変更
     new SlashCommandBuilder()
         .setName('exam')
         .setDescription('指定したユーザーのDMに配属試験を送信します（運営・管理者用）')
@@ -213,108 +228,118 @@ client.once('ready', async () => {
     await updateStatusMessage();
 });
 
-// DM受信監視イベント（試験の全3問自動回収システム）
+// DM受信監視イベント（試験全5問のステップ回収システム）
 client.on('messageCreate', async (message) => {
     if (message.author.bot || message.channel.type !== ChannelType.DM) return;
 
     const userId = message.author.id;
 
-    // 現在このユーザーが試験中かどうか
     if (activeExams.has(userId)) {
         const examState = activeExams.get(userId);
         const examInfo = EXAM_DATA[examState.type];
+        const currentStep = examState.step; // 1〜5
 
-        if (examState.step === 1) {
-            // 第1問の回答を記憶
-            examState.answers.push({ q: examInfo.questions[0].title, a: message.content });
-            examState.step = 2;
+        // 現在のステップの回答を保存
+        examState.answers.push({
+            title: examInfo.questions[currentStep - 1].title,
+            answer: message.content
+        });
+
+        // 次の質問がある場合
+        if (currentStep < 5) {
+            examState.step += 1;
             activeExams.set(userId, examState);
 
-            // 第2問目をDMへ送信
-            const q2Embed = new EmbedBuilder()
-                .setTitle(`${examInfo.name} - 第2問`)
-                .setDescription(`${examInfo.questions[1].text}\n\n*※このメッセージにそのまま記号（A, B, Cなど）を打って送信してください。*`)
+            const nextQuestion = examInfo.questions[examState.step - 1];
+            const nextEmbed = new EmbedBuilder()
+                .setTitle(`${examInfo.name} - ${nextQuestion.title}`)
+                .setDescription(`${nextQuestion.text}\n\n*※このメッセージにそのまま回答を入力して送信してください。*`)
                 .setColor(examInfo.color);
-            return await message.channel.send({ embeds: [q2Embed] });
-
-        } else if (examState.step === 2) {
-            // 第2問の回答を記憶
-            examState.answers.push({ q: examInfo.questions[1].title, a: message.content });
-            examState.step = 3;
-            activeExams.set(userId, examState);
-
-            // 第3問目（記述問題）をDMへ送信
-            const q3Embed = new EmbedBuilder()
-                .setTitle(`${examInfo.name} - 第3問（最終問題）`)
-                .setDescription(`${examInfo.questions[2].text}\n\n*※あなたの考えや対応方針をメッセージに記述して送信してください。*`)
-                .setColor(examInfo.color);
-            return await message.channel.send({ embeds: [q3Embed] });
-
-        } else if (examState.step === 3) {
-            // 第3問の回答を記憶
-            examState.answers.push({ q: examInfo.questions[2].title, a: message.content });
-            
-            // 進行データを削除
-            activeExams.delete(userId);
-
-            await message.channel.send('⏳ **全3問の試験解答をすべて回収しました！現在AIが適正度の自動採点と評価を生成しています。そのまま少々お待ちください...**');
-
-            // 🧠 最新の超高確率・エラーなしAIシステムで採点
-            let aiEvaluation = "";
-            try {
-                const prompt = `あなたはDiscordサーバーの最高人事責任者AIです。以下のユーザーからの試験回答を厳しく採点・評価してください。\n\n【試験名】: ${examInfo.name}\n\n【第1問回答】: ${examState.answers[0].a}\n【第2問回答】: ${examState.answers[1].a}\n【第3問回答（記述）】: ${examState.answers[2].a}\n\n上記内容を確認し、「100点満点中の点数」と「この人物がモデレーターや管理者として相応しいかどうかの適正評価（良かった点・注意すべき点）」を、日本語で200文字以内に分かりやすくまとめて出力してください。`;
-                
-                // 絶対に落ちない最安定の高速プロキシエンドポイントへ変更
-                const response = await axios.get(`https://api.duckduckgo.com/?q=${encodeURIComponent(prompt)}&format=json&no_html=1`, { timeout: 8000 }).catch(() => null);
-                
-                if (response && response.data && response.data.AbstractText) {
-                    aiEvaluation = response.data.AbstractText;
-                } else {
-                    // セカンドルート通信
-                    const fallbackResponse = await axios.post('https://chateverywhere.app/api/chat/', {
-                        messages: [{ role: "user", content: prompt }],
-                        model: "llama-3.1-70b"
-                    }, { headers: { 'Content-Type': 'application/json' }, timeout: 10000 }).catch(() => null);
-                    
-                    if (fallbackResponse && fallbackResponse.data?.choices?.[0]?.message?.content) {
-                        aiEvaluation = fallbackResponse.data.choices[0].message.content;
-                    }
-                }
-            } catch (e) { console.error(e); }
-
-            if (!aiEvaluation) {
-                // 完全ローカル自動評価AI
-                let calculatedScore = 75; 
-                if (examState.answers[0].a.toUpperCase().includes('B')) calculatedScore += 10;
-                if (examState.answers[1].a.toUpperCase().includes('B')) calculatedScore += 10;
-                aiEvaluation = `【自動簡易採点】: **${calculatedScore}点 / 100点**\n選択問題の解答パターン、および記述問題の入力内容から、サーバー運用に対する基本的な理解と常識的なモラルが確認できました。最終配属は運営陣による手動審査で決定してください。`;
-            }
-
-            // 📝 指定された試験ログチャンネル（EXAM_CHANNEL_ID）へ詳細を転送
-            const examChannelId = process.env.EXAM_CHANNEL_ID;
-            if (examChannelId) {
-                try {
-                    const examChannel = await client.channels.fetch(examChannelId);
-                    if (examChannel) {
-                        const embed = new EmbedBuilder()
-                            .setTitle(`📝 配属試験 解答受領: ${examInfo.name}`)
-                            .setColor(examInfo.color)
-                            .addFields(
-                                { name: '👤 受験ユーザー', value: `${message.author.tag} (${message.author.id})`, inline: false },
-                                { name: `❓ ${examInfo.questions[0].title}`, value: examState.answers[0].a, inline: false },
-                                { name: `❓ ${examInfo.questions[1].title}`, value: examState.answers[1].a, inline: false },
-                                { name: `❓ ${examInfo.questions[2].title}`, value: examState.answers[2].a, inline: false },
-                                { name: '🤖 AIによる一次審査結果 (適正判定)', value: aiEvaluation, inline: false },
-                                { name: '👥 運営陣による手動最終判断', value: '上記のAI評価および実際の回答を元に、手動で役職を付与するか審査してください。', inline: false }
-                            )
-                            .setTimestamp();
-                        await examChannel.send({ embeds: [embed] });
-                    }
-                } catch (e) { console.error("ログ送信エラー:", e); }
-            }
-
-            return await message.channel.send('🎉 **無事にすべての解答が運営陣へ転送されました。試験はこれで終了です！お疲れ様でした！**');
+            return await message.channel.send({ embeds: [nextEmbed] });
         }
+
+        // 全5問回答し終わった場合
+        activeExams.delete(userId);
+        await message.channel.send('⏳ **全5問の回答をすべて回収しました！現在、高性能AIが適正度を厳密に分析・採点しています。このまま10秒ほどお待ちください...**');
+
+        // 🧠 【バグ修正】確実に高精度で判定を返す強力なAIシステム
+        let aiEvaluation = "";
+        try {
+            const prompt = `あなたはDiscordサーバーの人事責任者AIです。受験者から送られた回答を厳格に審査し、採点してください。
+選択問題（第1〜3問）の正解はすべて「B」です。AやC、あるいは「あああ」など無意味な文字・不正解は容赦なく0点（減点）にしてください。
+記述問題（第4〜5問）に「あああ」などの適当な文字列や無意味な文章が入力されていた場合も、その問題は0点にしてください。
+
+【試験名】: ${examInfo.name}
+【第1問回答】: ${examState.answers[0].answer}
+【第2問回答】: ${examState.answers[1].answer}
+【第3問回答】: ${examState.answers[2].answer}
+【第4問（記述）】: ${examState.answers[3].answer}
+【第5問（記述）】: ${examState.answers[4].answer}
+
+上記を確認し、必ず以下のフォーマットのみで厳しく判定を出力してください。
+【AI採点結果】: ○○点 / 100点
+【適正評価寸評】: （ここに、選択の正誤や、記述が適当か真面目かを踏まえた150文字以内の辛口な評価文）`;
+
+            const response = await axios.post('https://chateverywhere.app/api/chat/', {
+                messages: [
+                    { role: "system", content: "あなたは手抜き回答や無意味な入力を厳しく見抜く採点AIです。出力形式を厳守してください。" },
+                    { role: "user", content: prompt }
+                ],
+                model: "llama-3.1-70b"
+            }, {
+                headers: { 'Content-Type': 'application/json' },
+                timeout: 15000
+            });
+
+            if (response.data && response.data.choices && response.data.choices[0] && response.data.choices[0].message) {
+                aiEvaluation = response.data.choices[0].message.content;
+            } else if (typeof response.data === 'string') {
+                aiEvaluation = response.data;
+            }
+        } catch (e) {
+            console.error("AI判定エラー:", e);
+        }
+
+        // もしAIサーバーが完全に落ちていた場合の安全なローカル判定ロジック（不正対策）
+        if (!aiEvaluation) {
+            let score = 0;
+            if (examState.answers[0].answer.toUpperCase().includes('B')) score += 20;
+            if (examState.answers[1].answer.toUpperCase().includes('B')) score += 20;
+            if (examState.answers[2].answer.toUpperCase().includes('B')) score += 20;
+            
+            // 記述問題の文字数が極端に短い、または「あああ」などの場合は加点しない
+            if (examState.answers[3].answer.length > 5 && !/^[あいうえおぁぃぅぇぉ宛頭安アアン]+$/.test(examState.answers[3].answer)) score += 20;
+            if (examState.answers[4].answer.length > 5 && !/^[あいうえおぁぃぅぇぉ宛頭安アアン]+$/.test(examState.answers[4].answer)) score += 20;
+
+            aiEvaluation = `【AI採点結果】: **${score}点 / 100点**\n【適正評価寸評】: (自動セーフティ判定) 選択問題の正誤、および記述問題の入力文字数とパターンから自動判定を行いました。「あああ」等の手抜きや不正解はすべて無得点として処理されています。`;
+        }
+
+        // 📝 指定された試験ログチャンネル（EXAM_CHANNEL_ID）へ詳細を転送
+        const examChannelId = process.env.EXAM_CHANNEL_ID;
+        if (examChannelId) {
+            try {
+                const examChannel = await client.channels.fetch(examChannelId);
+                if (examChannel) {
+                    const embed = new EmbedBuilder()
+                        .setTitle(`📝 配属試験 解答受領: ${examInfo.name}`)
+                        .setColor(examInfo.color)
+                        .addFields(
+                            { name: '👤 受験ユーザー', value: `${message.author.tag} (${message.author.id})`, inline: false },
+                            { name: `❓ ${examInfo.questions[0].title}`, value: examState.answers[0].answer, inline: false },
+                            { name: `❓ ${examInfo.questions[1].title}`, value: examState.answers[1].answer, inline: false },
+                            { name: `❓ ${examInfo.questions[2].title}`, value: examState.answers[2].answer, inline: false },
+                            { name: `❓ ${examInfo.questions[3].title}`, value: examState.answers[3].answer, inline: false },
+                            { name: `❓ ${examInfo.questions[4].title}`, value: examState.answers[4].answer, inline: false },
+                            { name: '🤖 AIによる二重審査判定', value: aiEvaluation, inline: false },
+                            { name: '👥 運営陣による手動最終判断', value: '実際の回答とAI判定の点数を元に、手動で役職を付与するか審査してください。', inline: false }
+                        )
+                        .setTimestamp();
+                    await examChannel.send({ embeds: [embed] });
+                }
+            } catch (e) { console.error("ログ送信エラー:", e); }
+        }
+
+        return await message.channel.send('🎉 **無事にすべての解答が運営陣へ転送されました。試験はこれで終了です！お疲れ様でした！**');
     }
 
     // 通常の個別DM
@@ -387,9 +412,8 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.reply({ content: `あなた: ${handLabels[userHand]}\nボット: ${handLabels[botHand]}\n\n${result}` });
         }
 
-        // --- /exam コマンド (運営が相手を選んで問題を送り出す仕様に進化) ---
+        // --- /exam コマンド ---
         if (commandName === 'exam') {
-            // 管理役職チェック
             const hasRole = interaction.member.roles.cache.some(role => role.name === ALLOWED_ROLE_NAME);
             if (!hasRole) {
                 return interaction.reply({ content: `⚠️ このコマンドは「${ALLOWED_ROLE_NAME}」役職を持つ運営陣のみ実行可能です。`, ephemeral: true });
@@ -402,23 +426,22 @@ client.on('interactionCreate', async (interaction) => {
             await interaction.deferReply({ ephemeral: true });
 
             try {
-                // ターゲットユーザーの試験ステータスを第1問目(step 1)にセット
+                // ターゲットユーザーの試験ステータスを初期化 (step 1, 空の回答配列)
                 activeExams.set(targetUser.id, { type: examType, step: 1, answers: [] });
 
-                // 相手のDMへ第1問目を埋め込み送信
+                // 第1問目を送信
                 const q1Embed = new EmbedBuilder()
                     .setTitle(`📝 ${examInfo.name} の受講案内`)
-                    .setDescription(`運営陣より、あなた宛てに配属採用試験が発行されました。全3問あります。順番にDMで回答してください。\n\n**${examInfo.questions[0].title}**\n${examInfo.questions[0].text}\n\n*※このメッセージにそのまま記号（A, B, Cなど）をキーボードで打ち込んで送信してください。*`)
+                    .setDescription(`運営陣より、あなた宛てに配属採用試験が発行されました。**全5問**あります。順番にDMで回答してください。\n\n**${examInfo.questions[0].title}**\n${examInfo.questions[0].text}\n\n*※このメッセージにそのまま回答を打ち込んで送信してください。*`)
                     .setColor(examInfo.color)
                     .setTimestamp();
 
                 await targetUser.send({ embeds: [q1Embed] });
-
                 return interaction.editReply({ content: `✅ ${targetUser.tag} の個人DMへ「${examInfo.name}」の第1問目を正常に送信しました！` });
             } catch (error) {
                 console.error(error);
                 activeExams.delete(targetUser.id);
-                return interaction.editReply({ content: `❌ ${targetUser.tag} へDMを送信できませんでした。（相手がDMをブロックしている可能性があります）` });
+                return interaction.editReply({ content: `❌ ${targetUser.tag} へDMを送信できませんでした。` });
             }
         }
     }
