@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ChannelType } = require('discord.js');
 const { joinVoiceChannel, createAudioPlayer, createAudioResource, getVoiceConnection, StreamType } = require('@discordjs/voice');
 const express = require('express');
 const axios = require('axios');
@@ -8,7 +8,7 @@ const axios = require('axios');
 // ==========================================
 const app = express();
 const PORT = process.env.PORT || 3000;
-app.get('/', (req, res) => { res.send('Bot is running perfectly with Exam & AI features!'); });
+app.get('/', (req, res) => { res.send('Bot is running perfectly with Exam Forum Routing!'); });
 app.listen(PORT, () => { console.log(`Web server running on port ${PORT}`); });
 
 // ==========================================
@@ -20,18 +20,25 @@ const client = new Client({
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildVoiceStates
-    ]
+        GatewayIntentBits.GuildVoiceStates,
+        GatewayIntentBits.DirectMessages // ✉️ DMの文字入力を監視するために必須
+    ],
+    partials: ['Channel'] // DMを正常に受け取るために必須
 });
+
+// 🛠️ サーバーに合わせて変更が必要な設定ID
+const FORUM_CHANNEL_ID = process.env.EXAM_FORUM_CHANNEL_ID || "あなたのフォーラムチャンネルIDを入力"; 
+const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID || "運営・スタッフのロールIDを入力"; 
 
 // 管理用データ
 const lotteryData = new Map(); 
 const voteData = new Map();       
 const ttsChannels = new Map();
-const activeExams = new Map();       // 受験中のユーザーデータ
-const userExamSettings = new Map();  // 人事部が設定した試験タイプ
 
-// 役職・ロール名定義
+// 📝 試験・質問中継システム用データ
+const activeExams = new Map();       // 受験中のユーザーデータ (userId -> session)
+const forumToUser = new Map();       // フォーラムスレッドIDからユーザーIDへの逆引き (threadId -> userId)
+
 const ROLE_HR = "人事部【Human Resources】";
 const ROLE_STAFF = "スタッフ【Staff】";
 const ROLE_ADMIN = "管理者【Admin】";
@@ -63,7 +70,6 @@ function addDateTimeOptions(builder) {
 // 3. 全スラッシュコマンド登録データ
 // ==========================================
 const commandsData = [
-    // 🤖 一般コマンド
     new SlashCommandBuilder().setName('ai').setDescription('高性能AIとおしゃべりします（日本語対応）').addStringOption(o => o.setName('question').setDescription('質問内容や話したいこと').setRequired(true)),
     new SlashCommandBuilder().setName('imagine').setDescription('AIでイラスト画像を自動生成します').addStringOption(o => o.setName('prompt').setDescription('生成したい画像の説明（英語推奨）').setRequired(true)),
     new SlashCommandBuilder().setName('join').setDescription('ボイスチャンネルに参加してチャットの読み上げを開始します'),
@@ -71,12 +77,10 @@ const commandsData = [
     new SlashCommandBuilder().setName('omikuji').setDescription('今日の運勢を占います'),
     new SlashCommandBuilder().setName('dice').setDescription('1〜100のサイコロを振ります'),
 
-    // 🛡️ 人事部専用コマンド
     new SlashCommandBuilder().setName('exam').setDescription('指定したユーザーのDMに配属試験を送信します（人事部専用）').addUserOption(o => o.setName('user').setDescription('試験対象のメンバー').setRequired(true)).addStringOption(o => o.setName('type').setDescription('試験種別').setRequired(true).addChoices({ name: '🛡️ モデレーター試験', value: 'moderator' }, { name: '👑 管理者試験', value: 'admin' })),
     new SlashCommandBuilder().setName('exam_result').setDescription('配属試験の結果を一括発表します（人事部専用）').addUserOption(o => o.setName('user1').setDescription('受験者').setRequired(true)).addStringOption(o => o.setName('score1').setDescription('点数').setRequired(true)).addStringOption(o => o.setName('role1').setDescription('配属先').setRequired(true)),
 
-    // 🕒 スタッフ・管理者用タイマーコマンド
-    addDateTimeOptions(new SlashCommandBuilder().setName('lottery').setDescription('日時指定の自動抽選会を開催します').addStringOption(o => o.setName('title').setDescription('抽選会のタイトル').setRequired(true)).addStringOption(o => o.setName('body').setDescription('詳しい説明や景品内容').setRequired(true))).addStringOption(o => o.setName('mentions').setDescription('メンション先 (例: @everyone)')),
+    addDateTimeOptions(new SlashCommandBuilder().setName('lottery').setDescription('日時指定の自動抽選会を開催します').addStringOption(o => o.setName('title').setDescription('抽選会のタイトル').setRequired(true)).addStringOption(o => o.setName('body').setDescription('詳しい説明や景品内容').setRequired(true))).addStringOption(o => o.setName('mentions').setDescription('メンション先')),
     addDateTimeOptions(new SlashCommandBuilder().setName('vote').setDescription('日時指定・リアルタイム集計のアンケートを開始します').addStringOption(o => o.setName('title').setDescription('アンケートのタイトル').setRequired(true)).addStringOption(o => o.setName('body').setDescription('詳しい趣旨説明').setRequired(true)).addStringOption(o => o.setName('option1').setDescription('選択肢 1').setRequired(true)).addStringOption(o => o.setName('option2').setDescription('選択肢 2').setRequired(true))).addStringOption(o => o.setName('option3').setDescription('選択肢 3')).addStringOption(o => o.setName('option4').setDescription('選択肢 4')).addStringOption(o => o.setName('option5').setDescription('選択肢 5')).addStringOption(o => o.setName('mentions').setDescription('メンション先')),
 ].map(command => command.toJSON());
 
@@ -88,7 +92,7 @@ client.once('ready', async () => {
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     try {
         await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commandsData });
-        console.log('🚀 全コマンド（配属試験・AI・読み上げ含む）の同期が完了しました！');
+        console.log('🚀 割り込み質問機能を含む全コマンドの同期が完了しました！');
     } catch (error) { console.error('❌ コマンド登録エラー:', error); }
 });
 
@@ -111,6 +115,7 @@ setInterval(async () => {
             } catch (e) {}
         }
     }
+    // (投票タイマー省略せずに保持)
     for (const [msgId, data] of voteData.entries()) {
         if (now > data.deadline) {
             voteData.delete(msgId);
@@ -135,8 +140,9 @@ setInterval(async () => {
 // ==========================================
 async function sendExamQuestion(user, examType, index) {
     const questions = EXAM_QUESTIONS[examType];
+    
+    // 全問回答終了
     if (index >= questions.length) {
-        // 全問回答終了 -> AI総合自動採点へ
         const examSession = activeExams.get(user.id);
         activeExams.delete(user.id);
 
@@ -152,7 +158,7 @@ async function sendExamQuestion(user, examType, index) {
         const baseScore = Math.round((correctCount / questions.length) * 100);
         await user.send("📝 試験の全回答が完了しました。現在、AIによる総合人事評価を生成中です。10秒ほどお待ちください...");
 
-        let aiSummary = "AI採点システムが混み合っているか、通信エラーが発生したため、通常のモデレーター役職への仮配属を推奨します。運営陣でログを確認の上、必要に応じて昇格させてください。";
+        let aiSummary = "AI採点システムエラー、または混雑のため、通常の運営陣による手動確認ログを生成しました。";
         let finalScoreText = `${baseScore} / 100点`;
 
         try {
@@ -164,9 +170,7 @@ async function sendExamQuestion(user, examType, index) {
                 }]
             }, { timeout: 12000 });
             aiSummary = aiRes.data?.choices?.[0]?.message?.content || aiRes.data?.text || aiSummary;
-        } catch (e) {
-            finalScoreText = "判定エラー / 100点";
-        }
+        } catch (e) { finalScoreText = "判定完了（確認中） / 100点"; }
 
         const resultEmbed = new EmbedBuilder()
             .setTitle(`🤖 AIによる総合人事判定・最終配属先候補`)
@@ -175,10 +179,8 @@ async function sendExamQuestion(user, examType, index) {
                 { name: "【推奨する配属先】", value: examType === 'admin' ? "👑 管理者 (要手動確認)" : "🛡️ モデレーター (要手動確認)" },
                 { name: "【適正評価・配属理由寸評】", value: aiSummary }
             )
-            .setColor('#3498DB')
-            .setTimestamp();
+            .setColor('#3498DB').setTimestamp();
 
-        // 受験者本人と、設定したチャンネル（またはDM）に結果を通知
         await user.send({ embeds: [resultEmbed] });
         if (examSession.channelId) {
             try {
@@ -189,11 +191,10 @@ async function sendExamQuestion(user, examType, index) {
         return;
     }
 
-    // 問題の送信
     const currentQ = questions[index];
     const embed = new EmbedBuilder()
         .setTitle(`📝 配属選考試験 (${examType === 'admin' ? '👑 管理者篇' : '🛡️ モデレーター篇'})`)
-        .setDescription(`**${currentQ.q}**`)
+        .setDescription(`**${currentQ.q}**\n\n💡 *問題が分からない、または運営に質問したい場合は、チャットに「**質問**」とだけ送信してください。運営用の専用相談チャンネルが自動作成され、直接話すことができます。*`)
         .setColor('#E67E22')
         .setFooter({ text: `進捗: ${index + 1} / ${questions.length}` });
 
@@ -206,12 +207,116 @@ async function sendExamQuestion(user, examType, index) {
 }
 
 // ==========================================
-// 6. チャット読み上げ(TTS)処理
+// 6. メッセージ作成イベント（チャット読み上げ ＆ DM質問・フォーラム中継）
 // ==========================================
 client.on('messageCreate', async (message) => {
-    if (message.author.bot || !message.guild) return;
+    if (message.author.bot) return;
 
-    if (ttsChannels.has(message.guild.id) && ttsChannels.get(message.guild.id) === message.channel.id) {
+    // 📩 【A】ユーザーからのDM受信の処理（試験中 ＆ 質問ルーティングシステム）
+    if (message.channel.type === ChannelType.DM) {
+        const session = activeExams.get(message.author.id);
+        
+        if (session) {
+            // 1. ユーザーが「質問」と入力した場合（フォーラムを自動生成してストップ）
+            if (message.content.trim() === "質問") {
+                if (session.isQuestioning) {
+                    return message.reply("💡 既に質問モードは有効です。メッセージを入力すれば運営陣に届きます。");
+                }
+                
+                try {
+                    const forumChannel = await client.channels.fetch(FORUM_CHANNEL_ID);
+                    if (!forumChannel || forumChannel.type !== ChannelType.GuildForum) {
+                        return message.reply("❌ 申し訳ありません。サーバーの質問用フォーラムチャンネルが正しく設定されていないため、現在質問機能が使えません。");
+                    }
+
+                    // フォーラム内に新規スレッド（投稿）を自動作成
+                    const thread = await forumChannel.threads.create({
+                        name: `❓ 試験質問: ${message.author.username} さん`,
+                        autoArchiveDuration: 60,
+                        message: {
+                            content: `🔔 <@&${STAFF_ROLE_ID}> **【試験中の質問割り込み】**\n受験者の ${message.author} さんから試験中に質問が届きました！\nこのスレッドで発言した内容は、ボットを仲介して自動的にユーザーのDMに転送されます。\n\n💬 **対応が終了したら、ユーザー側に「質問終了」とチャットしてもらうか、運営側でスレッドを閉じてください。**`
+                        }
+                    });
+
+                    session.isQuestioning = true;
+                    session.threadId = thread.id;
+                    activeExams.set(message.author.id, session);
+                    forumToUser.set(thread.id, message.author.id);
+
+                    return message.reply("✨ 運営チームへの質問フォーラムが自動生成されました！現在、問題の進行は一時停止しています。\nこのまま聞きたい内容（質問）をメッセージで送信してください。運営からの返答がここに届きます。\n\n**質問がすべて解決したら、チャットに「質問終了」とだけ送信してください。試験が再開されます。**");
+                } catch (err) {
+                    console.error(err);
+                    return message.reply("❌ フォーラムスレッドの作成に失敗しました。時間をおいて再度「質問」と送信してください。");
+                }
+            }
+
+            // 2. ユーザーが「質問終了」と入力した場合（通常試験に復帰）
+            if (message.content.trim() === "質問終了") {
+                if (!session.isQuestioning) {
+                    return message.reply("💡 現在質問モードにはなっていません。そのまま選択肢ボタンを押して進めてください。");
+                }
+
+                // フォーラムスレッド側に終了を通知
+                if (session.threadId) {
+                    try {
+                        const thread = await client.channels.fetch(session.threadId);
+                        if (thread) await thread.send(`🏁 **【質問終了】** 受験者が「質問終了」を宣言したため、中継システムを終了し、試験を再開しました。`);
+                        forumToUser.delete(session.threadId);
+                    } catch (e) {}
+                }
+
+                session.isQuestioning = false;
+                session.threadId = null;
+                activeExams.set(message.author.id, session);
+
+                await message.reply("🏁 質問モードを終了しました！試験を再開します。先ほどの問題にお答えください。");
+                return sendExamQuestion(message.author, session.type, session.answers.length);
+            }
+
+            // 3. 質問モード中のメッセージをフォーラム（運営）へ転送
+            if (session.isQuestioning && session.threadId) {
+                try {
+                    const thread = await client.channels.fetch(session.threadId);
+                    if (thread) {
+                        await thread.send(`👤 **[受験者からのメッセージ]:** ${message.content}`);
+                        await message.react("✉️"); // 送信完了のサイン
+                    }
+                } catch (err) {
+                    await message.reply("❌ 運営チャットへのメッセージ転送に失敗しました。");
+                }
+                return;
+            }
+
+            // 質問モードではないのにDMで普通に文字を入力した場合のガイド
+            return message.reply("💡 選択肢は上の**ボタン**を押して回答してください。質問がある場合は「**質問**」と送信してください。");
+        }
+    }
+
+    // 🏢 【B】サーバー内（フォーラムスレッド内）からの発言を、受験者のDMへ逆転送
+    if (message.channel.isThread()) {
+        const userId = forumToUser.get(message.channel.id);
+        if (userId) {
+            try {
+                const targetUser = await client.users.fetch(userId);
+                if (targetUser) {
+                    const replyEmbed = new EmbedBuilder()
+                        .setAuthor({ name: `運営チーム (${message.author.username})`, iconURL: message.author.displayAvatarURL() })
+                        .setDescription(message.content)
+                        .setColor('#2ECC71')
+                        .setTimestamp();
+
+                    await targetUser.send({ embeds: [replyEmbed] });
+                    await message.react("✅"); // 転送完了マーク
+                }
+            } catch (err) {
+                await message.channel.send("❌ 受験者へのDM転送に失敗しました（DMがブロックされている可能性があります）。");
+            }
+            return;
+        }
+    }
+
+    // 🔊 【C】通常チャット読み上げ(TTS)の処理
+    if (message.guild && ttsChannels.has(message.guild.id) && ttsChannels.get(message.guild.id) === message.channel.id) {
         const connection = getVoiceConnection(message.guild.id);
         if (connection) {
             let cleanText = message.content.replace(/<@!?\d+>/g, 'メンション').replace(/<#\d+>/g, 'チャンネル').replace(/https?:\/\/\S+/g, 'URL');
@@ -235,18 +340,21 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.isButton()) {
         const { customId, message, user } = interaction;
 
-        // 📝 試験回答ボタンの処理
+        // 📝 試験回答ボタン
         if (customId.startsWith('exam_ans_')) {
-            const ansIdx = parseInt(customId.replace('exam_ans_', ''), 10);
             const session = activeExams.get(user.id);
-            if (!session) return interaction.reply({ content: '❌ この試験セッションは既に終了しているか無効です。', ephemeral: true });
+            if (!session) return interaction.reply({ content: '❌ この選考セッションは無効です。', ephemeral: true });
 
+            // ⚠️ 運営に質問中は問題の進行を完全にロック（進ませない）
+            if (session.isQuestioning) {
+                return interaction.reply({ content: '🔒 現在、運営チームへの「質問モード」が有効なため問題は一時停止しています。チャットで「質問終了」と送信してから回答を再開してください。', ephemeral: true });
+            }
+
+            const ansIdx = parseInt(customId.replace('exam_ans_', ''), 10);
             session.answers.push(ansIdx);
             activeExams.set(user.id, session);
 
-            // メッセージを更新してボタンを無効化
             await interaction.update({ components: [] });
-            // 次の問題へ
             return sendExamQuestion(user, session.type, session.answers.length);
         }
 
@@ -259,7 +367,7 @@ client.on('interactionCreate', async (interaction) => {
             await message.edit({ embeds: [updatedEmbed] }); return interaction.reply({ content: '🎉 エントリーしました！', ephemeral: true });
         }
 
-        // 投票
+        // 投票ボタン
         if (customId.startsWith('vote_opt_')) {
             const optIdx = parseInt(customId.replace('vote_opt_', ''), 10);
             const data = voteData.get(message.id); if (!data) return interaction.reply({ content: '❌ 終了しています。', ephemeral: true });
@@ -281,27 +389,22 @@ client.on('interactionCreate', async (interaction) => {
     // 🤖 AIチャットコマンド (/ai)
     if (commandName === 'ai') {
         await interaction.deferReply();
-        const question = options.getString('question');
         try {
             const res = await axios.post('https://chateverywhere.app/api/chat', {
                 model: "gpt-4o-mini",
-                messages: [{ role: "user", content: question }]
+                messages: [{ role: "user", content: options.getString('question') }]
             }, { timeout: 15000 });
-            const answer = res.data?.choices?.[0]?.message?.content || res.data?.text;
-            return interaction.editReply({ content: answer || "💡 AIから返答を取得できませんでした。" });
-        } catch (e) {
-            return interaction.editReply({ content: "❌ AIシステムのエラーです。時間を置いてお試しください。" });
-        }
+            return interaction.editReply({ content: res.data?.choices?.[0]?.message?.content || res.data?.text || "💡 返答が得られませんでした。" });
+        } catch (e) { return interaction.editReply({ content: "❌ AIシステムのエラーです。" }); }
     }
 
     // 🎨 AI画像生成コマンド (/imagine)
     if (commandName === 'imagine') {
         await interaction.deferReply();
-        const prompt = options.getString('prompt');
         try {
             const seed = Math.floor(Math.random() * 1000000);
-            const imageUrl = `https://image.pollinations.ai/p/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true&seed=${seed}`;
-            const imgEmbed = new EmbedBuilder().setTitle(`🎨 AIイラスト生成完了`).setDescription(`**プロンプト:** ${prompt}\n**作成者:** ${interaction.user}`).setImage(imageUrl).setColor('#FF69B4').setTimestamp();
+            const imageUrl = `https://image.pollinations.ai/p/${encodeURIComponent(options.getString('prompt'))}?width=1024&height=1024&nologo=true&seed=${seed}`;
+            const imgEmbed = new EmbedBuilder().setTitle(`🎨 AIイラスト生成完了`).setDescription(`**プロンプト:** ${options.getString('prompt')}\n**作成者:** ${interaction.user}`).setImage(imageUrl).setColor('#FF69B4').setTimestamp();
             return interaction.editReply({ embeds: [imgEmbed] });
         } catch (e) { return interaction.editReply({ content: "❌ 画像の生成に失敗しました。" }); }
     }
@@ -324,7 +427,7 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: '👋 退出しました。' });
     }
 
-    // 🛡️ 配属試験開始コマンド (/exam) 【復活】
+    // 🛡️ 配属試験開始コマンド (/exam)
     if (commandName === 'exam') {
         if (!isHrOrAdmin()) return interaction.reply({ content: '⚠️ このコマンドは人事部または管理者しか使用できません。', ephemeral: true });
         const targetUser = options.getUser('user');
@@ -332,7 +435,8 @@ client.on('interactionCreate', async (interaction) => {
 
         if (activeExams.has(targetUser.id)) return interaction.reply({ content: '⚠️ そのユーザーは現在別の試験を受験中です。', ephemeral: true });
 
-        activeExams.set(targetUser.id, { type: examType, answers: [], channelId: interaction.channel.id });
+        // 初期セッションデータを保存（isQuestioningでロック状態を管理）
+        activeExams.set(targetUser.id, { type: examType, answers: [], channelId: interaction.channel.id, isQuestioning: false, threadId: null });
         
         try {
             await targetUser.send(`🔔 **仲良組合連合専属運営陣からのお知らせ**\nあなたのDM宛てに配属試験が送信されました。以下の選択肢ボタンを押して回答を開始してください。`);
@@ -340,24 +444,18 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.reply({ content: `✅ ${targetUser} さんのDMに \`${examType}\` 試験を送信しました。` });
         } catch (e) {
             activeExams.delete(targetUser.id);
-            return interaction.reply({ content: `❌ ${targetUser} さんのDMへの送信に失敗しました（DM拒否設定の可能性があります）。`, ephemeral: true });
+            return interaction.reply({ content: `❌ DMへの送信に失敗しました（DM拒否設定の可能性があります）。`, ephemeral: true });
         }
     }
 
-    // 📢 一括結果発表コマンド (/exam_result) 【復活】
+    // 📢 一括結果発表コマンド (/exam_result)
     if (commandName === 'exam_result') {
         if (!isHrOrAdmin()) return interaction.reply({ content: '⚠️ 人事部または管理者専用です。', ephemeral: true });
-        const u1 = options.getUser('user1');
-        const s1 = options.getString('score1');
-        const r1 = options.getString('role1');
-
         const announceEmbed = new EmbedBuilder()
             .setTitle('📢 【特報】組合運営陣・公式人事発令')
             .setDescription(`厳正なる選考およびAI総合判定の結果、以下の通り配属を決定いたしました。`)
-            .addFields({ name: `👤 対象受験者: ${u1.username}`, value: `📊 **選考スコア**: \`${s1}\`\n💼 **最終配属先**: **${r1}**`, inline: false })
-            .setColor('#2ECC71')
-            .setFooter({ text: '仲良組合連合 専属人事部' })
-            .setTimestamp();
+            .addFields({ name: `👤 対象受験者: ${options.getUser('user1').username}`, value: `📊 **選考スコア**: \`${options.getString('score1')}\`\n💼 **最終配属先**: **${options.getString('role1')}**` })
+            .setColor('#2ECC71').setFooter({ text: '仲良組合連合 専属人事部' }).setTimestamp();
 
         await interaction.channel.send({ content: `🔔 @everyone 【人事発令通知】`, embeds: [announceEmbed] });
         return interaction.reply({ content: '✅ 人事結果を公式発表しました。', ephemeral: true });
