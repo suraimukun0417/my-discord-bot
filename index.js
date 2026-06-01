@@ -1,5 +1,5 @@
-const { Client, GatewayIntentBits, ActivityType, REST, Routes, SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ChannelType } = require('discord.js');
-const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, getVoiceConnection } = require('@discordjs/voice');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ChannelType } = require('discord.js');
+const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, getVoiceConnection, StreamType } = require('@discordjs/voice');
 const express = require('express');
 const axios = require('axios');
 
@@ -8,7 +8,7 @@ const axios = require('axios');
 // ==========================================
 const app = express();
 const PORT = process.env.PORT || 3000;
-app.get('/', (req, res) => { res.send('Bot is fully running with TTS and Image Generator!'); });
+app.get('/', (req, res) => { res.send('Bot is running flawlessly with opusscript!'); });
 app.listen(PORT, () => { console.log(`Web server running on port ${PORT}`); });
 
 // ==========================================
@@ -51,29 +51,8 @@ const lotteryData = new Map();
 const voteData = new Map();       
 const shiritoriGames = new Map();
 
-// 🗣️ 読み上げ用管理マップ
-const ttsChannels = new Map(); // guildId -> textChannelId
-
-const EXAM_DATA = {
-    moderator: {
-        name: '🛡️ モデレーター試験',
-        color: '#3498DB',
-        questions: [
-            { type: 'choice', title: '【第1問（選択）】ルール違反の確認', text: '一般ユーザーが「言葉遣いのルール」に明確に違反しているのを発見しました。最初にとるべき行動として適切なものはどれですか？\n\nA: 何も言わずに即座にサーバーからBANする\nB: 公開チャンネル、またはDMで注意・警告を与える\nC: 見て見ぬふりをする' },
-            { type: 'essay', title: '【第5問（記述）】ユーザー同士の口論への対応', text: '常連ユーザー同士がチャンネル内で激しい口論（喧嘩）を始めてしまいました。対応方針を具体的に記述してください。' }
-        ],
-        guide: `📊 **【モデレーター試験 正解＆解説】**\n**■ 選択問題正解:** 全て **「B」**`
-    },
-    admin: {
-        name: '👑 管理者試験',
-        color: '#E74C3C',
-        questions: [
-            { type: 'choice', title: '【第1問（選択）】権限設定のトラブル', text: '新しく作成したチャンネルが一般ユーザーに見えてしまっていると報告を受けました。最初に確認すべき項目はどれですか？\n\nA: チャンネルの閲覧権限（@everyone の設定）が正しく拒否されているか確認する\nB: 原因がわからないのでサーバー自体を削除して作り直す\nC: 放置する' },
-            { type: 'essay', title: '【第5問（記述）】サーバーの活性化企画', text: 'アクティブユーザーを増やすために、あなたが管理者になったら実施したい企画を記述してください。' }
-        ],
-        guide: `📊 **【管理者試験 正解＆解説】**\n**■ 選択問題正解:** 全て **「B」**`
-    }
-};
+// 🗣️ 読み上げ用管理マップ（guildId -> textChannelId）
+const ttsChannels = new Map(); 
 
 // 日時指定用の共通オプション関数
 function addDateTimeOptions(builder) {
@@ -86,7 +65,7 @@ function addDateTimeOptions(builder) {
 }
 
 // ==========================================
-// 3. 全スラッシュコマンドの定義配列 (ここに全てまとめて定義)
+// 3. 全スラッシュコマンドの定義
 // ==========================================
 const commandsData = [
     new SlashCommandBuilder().setName('status').setDescription('ボットのステータスを変更します（ボット管理用）').addStringOption(o => o.setName('type').setDescription('種類').setRequired(true).addChoices({ name: '起動', value: 'online' }, { name: 'メンテ', value: 'maintenance' }, { name: '停止', value: 'offline' })),
@@ -99,27 +78,27 @@ const commandsData = [
     new SlashCommandBuilder().setName('dice').setDescription('ランダムにサイコロを振ります（誰でも可能）'),
     new SlashCommandBuilder().setName('ai').setDescription('AIと自由におしゃべりや質問ができます（誰でも可能）').addStringOption(o => o.setName('question').setDescription('質問内容').setRequired(true)),
     
-    // 📢 読み上げコマンド
-    new SlashCommandBuilder().setName('join').setDescription('現在のボイスチャンネルにボットを呼び出して読み上げを開始します（誰でも可能）'),
-    new SlashCommandBuilder().setName('leave').setDescription('ボイスチャンネルからボットを退出させます（誰でも可能）'),
+    // 📢 読み上げコマンド（誰でも可能）
+    new SlashCommandBuilder().setName('join').setDescription('現在のボイスチャンネルにボットを呼び出して読み上げを開始します'),
+    new SlashCommandBuilder().setName('leave').setDescription('ボイスチャンネルからボットを退出させます'),
     
-    // 🎨 AI画像生成コマンド
-    new SlashCommandBuilder().setName('imagine').setDescription('要望に応じたイラスト画像を生成します（誰でも可能）').addStringOption(o => o.setName('prompt').setDescription('どのような画像を生成したいか（英語の方が綺麗に出ます）').setRequired(true)),
+    // 🎨 AI画像生成コマンド（誰でも可能）
+    new SlashCommandBuilder().setName('imagine').setDescription('要望に応じたイラスト画像を生成します').addStringOption(o => o.setName('prompt').setDescription('どのような画像を生成したいか（英語のほうが綺麗に出ます）').setRequired(true)),
 
-    // 🕒 期限詳細指定つき 抽選コマンド
+    // 🕒 抽選コマンド（Staff/Admin用）
     addDateTimeOptions(
         new SlashCommandBuilder()
             .setName('lottery')
-            .setDescription('日時指定・複数メンション対応の自動抽選会を開催します（Staff/Admin用）')
+            .setDescription('日時指定・複数メンション対応の自動抽選会を開催します')
             .addStringOption(o => o.setName('title').setDescription('抽選会のタイトル').setRequired(true))
             .addStringOption(o => o.setName('body').setDescription('詳しい説明・景品内容').setRequired(true))
-    ).addStringOption(o => o.setName('mentions').setDescription('メンション先 (スペース区切りで複数可 例: @everyone @役職名)').setRequired(false)),
+    ).addStringOption(o => o.setName('mentions').setDescription('メンション先 (スペース区切りで複数可 例: @everyone @役職名)')),
 
-    // 🕒 期限詳細指定つき 投票コマンド
+    // 🕒 投票コマンド（Staff/Admin用）
     addDateTimeOptions(
         new SlashCommandBuilder()
             .setName('vote')
-            .setDescription('日時指定・投票数リアルタイム表示のアンケートを開始します（Staff/Admin用）')
+            .setDescription('日時指定・投票数リアルタイム表示のアンケートを開始します')
             .addStringOption(o => o.setName('title').setDescription('アンケートのタイトル').setRequired(true))
             .addStringOption(o => o.setName('body').setDescription('詳しい趣旨説明').setRequired(true))
             .addStringOption(o => o.setName('option1').setDescription('選択肢 1').setRequired(true))
@@ -144,7 +123,7 @@ async function askAI(systemPrompt, userPrompt) {
     } catch (e) { return null; }
 }
 
-// 🔊 音声合成API (Google Translate TTSを使用)
+// 🔊 Google TTSのURL取得
 function getTtsUrl(text) {
     return `https://translate.google.com/translate_tts?ie=UTF-8&tl=ja&client=tw-ob&q=${encodeURIComponent(text)}`;
 }
@@ -188,19 +167,11 @@ async function updateStatusMessage() {
 // ==========================================
 client.once('ready', async () => {
     console.log(`${client.user.tag} がログインしました。`);
-    
-    // 💡 すべての新規コマンドをDiscordサーバーへ再登録します
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     try {
-        console.log('⏳ スラッシュコマンドの登録データをDiscordへ送信中...');
-        await rest.put(
-            Routes.applicationCommands(process.env.CLIENT_ID),
-            { body: commandsData }
-        );
-        console.log('✅ 読み上げ・画像生成を含むすべてのスラッシュコマンドが同期されました！');
-    } catch (error) {
-        console.error('❌ コマンド登録エラー:', error);
-    }
+        await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commandsData });
+        console.log('✅ すべてのスラッシュコマンドが同期されました！');
+    } catch (error) { console.error('❌ コマンド登録エラー:', error); }
     currentStatus = "online"; await updateStatusMessage();
 });
 
@@ -255,7 +226,7 @@ setInterval(async () => {
 }, 10000);
 
 // ==========================================
-// 6. メッセージ作成イベント (しりとり、試験、およびチャット読み上げ)
+// 6. メッセージ作成イベント (しりとり＆チャット読み上げ)
 // ==========================================
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
@@ -264,19 +235,16 @@ client.on('messageCreate', async (message) => {
     if (ttsChannels.has(message.guildId) && ttsChannels.get(message.guildId) === message.channel.id) {
         const connection = getVoiceConnection(message.guildId);
         if (connection) {
-            // URLやメンション、絵文字を省く簡易クリーンアップ
             let cleanText = message.content.replace(/<@!?\d+>/g, 'メンション').replace(/https?:\/\/\S+/g, 'URL');
             if (cleanText.length > 40) cleanText = cleanText.substring(0, 40) + '以下略';
             if (cleanText.trim().length > 0) {
                 const player = createAudioPlayer();
-                const resource = createAudioResource(getTtsUrl(cleanText));
+                const resource = createAudioResource(getTtsUrl(cleanText), { inputType: StreamType.Arbitrary });
                 player.play(resource);
                 connection.subscribe(player);
             }
         }
     }
-
-    // しりとり・試験処理 (既存のコードと同様のため省略)
 });
 
 // ==========================================
@@ -300,8 +268,7 @@ client.on('interactionCreate', async (interaction) => {
             data.votes[user.id] = optIdx; voteData.set(message.id, data);
             const totalVotes = Object.keys(data.votes).length;
             
-            // リアルタイムに総投票数を表示更新
-            const updatedEmbed = EmbedBuilder.from(message.embeds[0]).setFields({ name: '📊 現在の総投票数', value: `\`${totalVotes}\` 票が入っています` });
+            const updatedEmbed = EmbedBuilder.from(message.embeds[0]).setFields({ name: '📊 現在の総投票数', value: `\`${totalVotes}\` 票` });
             await message.edit({ embeds: [updatedEmbed] });
             return interaction.reply({ content: `✅ 投票しました！`, ephemeral: true });
         }
@@ -314,11 +281,11 @@ client.on('interactionCreate', async (interaction) => {
     const hasRole = (rName) => member.roles.cache.some(r => r.name === rName);
     const isStaffOrAdmin = () => hasRole(ROLE_STAFF) || hasRole(ROLE_ADMIN);
 
-    // 1. 自由利用枠（誰でも可能：AI、読み上げ、画像生成、おみくじ、ダイス）
+    // 1. 誰でも使える機能 (AI, 読み上げ, 画像生成)
     if (commandName === 'ai') {
         await interaction.deferReply();
-        const reply = await askAI("フレンドリーなAIアシスタント", options.getString('question'));
-        return interaction.editReply({ content: reply || "AIが混雑しています。" });
+        const reply = await askAI("AIアシスタント", options.getString('question'));
+        return interaction.editReply({ content: reply || "AIが応答できませんでした。" });
     }
 
     if (commandName === 'join') {
@@ -326,21 +293,20 @@ client.on('interactionCreate', async (interaction) => {
         if (!vc) return interaction.reply({ content: '❌ 先にボイスチャンネルに参加してください。', ephemeral: true });
         joinVoiceChannel({ channelId: vc.id, guildId: guild.id, adapterCreator: guild.voiceAdapterCreator });
         ttsChannels.set(guild.id, interaction.channel.id);
-        return interaction.reply({ content: `🔊 ボイスチャンネル「${vc.name}」に接続しました！この部屋のテキストを読み上げます。` });
+        return interaction.reply({ content: `🔊 ボイスチャンネル「${vc.name}」に接続しました！チャットを読み上げます。` });
     }
 
     if (commandName === 'leave') {
         const connection = getVoiceConnection(guild.id);
         if (!connection) return interaction.reply({ content: '❌ ボットは音声チャンネルに参加していません。', ephemeral: true });
         connection.destroy(); ttsChannels.delete(guild.id);
-        return interaction.reply({ content: '👋 ボイスチャンネルから退出しました。' });
+        return interaction.reply({ content: '👋 退出しました。' });
     }
 
     if (commandName === 'imagine') {
         await interaction.deferReply();
         const prompt = options.getString('prompt');
         try {
-            // 無料かつ迅速な高速画像生成APIエンドポイントを利用
             const res = await axios.post('https://api.deepinfra.com/v1/openai/images/generations', {
                 prompt: prompt,
                 model: "black-forest-labs/FLUX-1-schnell",
@@ -359,15 +325,14 @@ client.on('interactionCreate', async (interaction) => {
                 .setTimestamp();
             return interaction.editReply({ embeds: [imgEmbed] });
         } catch (e) {
-            return interaction.editReply({ content: '❌ 画像生成に失敗しました。プロンプトを英語に変換して試すか、しばらく時間を置いてください。' });
+            return interaction.editReply({ content: '❌ 画像生成に失敗しました。時間をおいて英語で試してみてください。' });
         }
     }
 
-    // 2. スタッフ・管理者枠のコマンド
+    // 2. スタッフ・管理者専用機能
     if (['lottery', 'vote', 'embed', 'dm_say', 'server_status'].includes(commandName)) {
         if (!isStaffOrAdmin()) return interaction.reply({ content: '⚠️ 権限がありません。', ephemeral: true });
 
-        // 共通日時取得ロジック
         const parseDeadline = () => {
             const y = options.getInteger('year'); const m = options.getInteger('month') - 1; const d = options.getInteger('day');
             const h = options.getInteger('hour'); const min = options.getInteger('minute');
@@ -398,12 +363,9 @@ client.on('interactionCreate', async (interaction) => {
             voteData.set(replyMsg.id, { title, body, deadline, options: opts, votes: {}, mentions, channelId: interaction.channel.id });
             return interaction.reply({ content: '✅ 投票を開始しました！', ephemeral: true });
         }
-
-        // embed, dm_say, server_status (前回の実装通りに稼働)
     }
 
-    // 3. その他、人事部専用枠 (exam, exam_result)
-    // 4. おみくじ・ダイス (前回の実装通りに稼働)
+    // 遊び機能
     if (commandName === 'omikuji') {
         const fortunes = ['大吉 🌟', '吉 ✨', '中吉 🎵'];
         return interaction.reply({ embeds: [new EmbedBuilder().setTitle('🔮 今日の運勢').setDescription(`結果: **${fortunes[Math.floor(Math.random() * fortunes.length)]}**`).setColor('#FF69B4')] });
