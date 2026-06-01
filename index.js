@@ -27,8 +27,8 @@ const client = new Client({
 });
 
 // 🛠️ サーバーに合わせて変更が必要な設定ID
-const FORUM_CHANNEL_ID = process.env.EXAM_FORUM_CHANNEL_ID || "あなたのフォーラムチャンネルIDを入力"; 
-const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID || "運営・スタッフのロールIDを入力"; 
+const FORUM_CHANNEL_ID = process.env.EXAM_FORUM_CHANNEL_ID || "1510570926302040105"; 
+const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID || "1509525951401300139"; 
 
 // 管理用データ
 const lotteryData = new Map(); 
